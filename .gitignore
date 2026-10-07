@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+*.egg-info/
+dist/
+build/
+
+# Node
+node_modules/
+apps/web/dist/
+
+# Env & secrets
+.env
+.env.*
+!.env.example
+
+# Local tooling
+.claude-flow/
+.claude/
+.DS_Store
+.idea/
+.vscode/
+
+# Model caches / eval artifacts
+.cache/
+evals/results/*.raw.json

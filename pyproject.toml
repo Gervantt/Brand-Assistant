@@ -1,0 +1,69 @@
+[project]
+name = "brand-assistant"
+version = "0.1.0"
+description = "Brand Assistant — multi-step LLM agent with MCP tools, RBAC, RAG and observability"
+requires-python = ">=3.12,<3.13"
+dependencies = []
+
+[tool.uv]
+package = false
+
+[tool.uv.workspace]
+members = ["packages/shared", "apps/api"]
+
+[tool.uv.sources]
+brand-shared = { workspace = true }
+brand-api = { workspace = true }
+
+[dependency-groups]
+dev = [
+    "brand-shared",
+    "brand-api",
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.7",
+    "mypy>=1.13",
+    "asgi-lifespan>=2.1",
+    "types-pyyaml>=6.0",
+    "httpx>=0.27",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = ["apps/web"]
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "B", "UP", "N", "S", "ASYNC", "SIM", "RUF", "PL", "PT", "TID"]
+ignore = [
+    "PLR0913", # many args is fine for DI-heavy FastAPI handlers
+    "PLR2004", # magic values are fine in tests/config
+    "RUF001", "RUF002", "RUF003", # Cyrillic text is intentional
+]
+
+[tool.ruff.lint.per-file-ignores]
+"**/tests/**" = ["S101", "S105", "S106", "PLR2004"]
+"**/alembic/versions/*" = ["N999"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["brand_api", "brand_shared", "brand_mcp"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+plugins = ["pydantic.mypy"]
+mypy_path = ["packages/shared/src", "apps/api/src"]
+explicit_package_bases = true
+namespace_packages = true
+exclude = ["apps/web/", "alembic/versions/"]
+
+[[tool.mypy.overrides]]
+module = ["pgvector.*", "fastembed.*", "docx.*", "asyncpg.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
+testpaths = ["apps/api/tests", "packages/shared/tests"]
+addopts = "-ra"
