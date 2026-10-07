@@ -3,3 +3,14 @@ log_level: INFO
 log_json: true
 cors_origins:
   - http://localhost:5173
+
+llm:
+  provider: groq            # ← switch provider here: groq | openai | anthropic | ollama
+  fallback:                 # tried in order when the primary fails
+    - groq/qwen/qwen3.8-27b # same provider, separate rate-limit bucket
+    - openai
+    - anthropic
+    - ollama
+  classifier: heuristic     # heuristic | llm
+  timeout_s: 45
+  max_retries: 2

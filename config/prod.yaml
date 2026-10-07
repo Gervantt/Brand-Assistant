@@ -1,3 +1,12 @@
 # Production profile: Render + Neon + Upstash + Groq + Langfuse Cloud, reranker off.
 log_level: INFO
 log_json: true
+
+llm:
+  provider: groq
+  fallback:
+    - groq/qwen/qwen3.8-27b
+    - groq/openai/gpt-oss-20b
+  classifier: heuristic
+  timeout_s: 30
+  max_retries: 2
