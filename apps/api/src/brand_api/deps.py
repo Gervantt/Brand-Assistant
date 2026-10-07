@@ -7,6 +7,7 @@ from fastapi import Depends, Request
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from brand_api.agent.orchestrator import Agent
 from brand_api.config import Settings
 from brand_api.llm.router import LLMRouter
 
@@ -21,6 +22,10 @@ def get_engine(request: Request) -> AsyncEngine:
 
 def get_redis(request: Request) -> Redis:
     return cast(Redis, request.app.state.redis)
+
+
+def get_agent(request: Request) -> Agent:
+    return cast(Agent, request.app.state.agent)
 
 
 def get_llm(request: Request) -> LLMRouter:
@@ -38,3 +43,11 @@ EngineDep = Annotated[AsyncEngine, Depends(get_engine)]
 RedisDep = Annotated[Redis, Depends(get_redis)]
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
 LLMDep = Annotated[LLMRouter, Depends(get_llm)]
+AgentDep = Annotated[Agent, Depends(get_agent)]
+
+
+def get_sessionmaker(request: Request) -> async_sessionmaker[AsyncSession]:
+    return cast(async_sessionmaker[AsyncSession], request.app.state.sessionmaker)
+
+
+SessionmakerDep = Annotated[async_sessionmaker[AsyncSession], Depends(get_sessionmaker)]

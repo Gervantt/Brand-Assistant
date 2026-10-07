@@ -109,3 +109,52 @@ some), and can be switched off with `ALLOW_REGISTRATION=false`.
 `DEMO_PASSWORD` on every start, so vandalism through the public demo heals on restart. The
 login page uses `POST /auth/demo-login {role}` — the frontend never sees the demo password.
 Demo accounts can't be edited through the admin API. `DEMO_MODE=false` turns all of this off.
+
+## 014. MCP SDK v2, streamable HTTP, one session per agent run
+**Context.** The tool server is a separate process speaking MCP. The current SDK is `mcp` 2.x
+(`MCPServer`, `Client`, protocol revision 2026-07-28).
+**Decision.** The gateway opens one MCP session per agent run, authenticated with a short-lived
+service JWT (`MCP_INTERNAL_SECRET`, audience `brand-mcp`) that carries the end user's id, role,
+client ids and the trace id. An ASGI gate on the MCP server answers 401 before MCP parses
+anything when the token is missing/invalid. DNS-rebinding protection is off: the endpoint is
+never browser-facing and every request is authenticated.
+
+## 015. Three permission checks per tool call
+1. **Before the model sees tools** — the gateway filters the MCP catalogue by role
+   (`llm_tools_for`); viewers literally don't know generation tools exist.
+2. **On every call the model makes** — the gateway re-checks the name against the offered set
+   and the role (the model can still emit any name, e.g. after prompt injection). Blocked calls
+   are never sent to MCP; the model gets an error result and the attempt is logged.
+3. **On the MCP server** — the first resolver of every tool re-checks role and client access
+   from the service token. Because resolvers run before the tool body, this is what guarantees
+   a denied call never triggers LLM sampling.
+`client_id` is removed from the tool schemas shown to the model and injected by the gateway from
+the conversation, so a model cannot point a tool at another client.
+
+## 016. Generation via MCP sampling with resolver DAGs
+**Context.** Plan/post/brief generation needs an LLM inside the tool, but cost accounting,
+routing, fallback and the token budget must stay in one place.
+**Decision.** Generation tools request completions from the client through MCP sampling
+(`Resolve(fn)` returning `Sample`, SDK v2). The gateway's `SamplingBridge` answers with the LLM
+router (`purpose=sampling:<tool>` in `llm_calls`), passing the JSON schema from sampling
+metadata so providers use JSON mode. Per tool the DAG is
+`authorize → prompt (brand context from DB) → first sample → accept or one repair sample`.
+After a second invalid answer the tool returns a clear `ToolError`.
+**Trade-off.** More protocol round trips than generating in the gateway, but tools stay
+self-contained and reusable by any MCP host that supports sampling.
+
+## 017. Drafts in Redis, publishing in Postgres
+`create_content_plan` stores the validated plan as a Redis draft (24 h TTL) and returns a
+`draft_id`. `publish_content_plan` — the only tool with a side effect — copies it into
+`content_plans`. Publishing is idempotent (`source_draft_id` is unique; a concurrent duplicate
+resolves to the existing row) and checks that the draft belongs to the conversation's client.
+The UI's "Опубликовать" button calls `POST /plans/publish`, which goes through the same MCP tool.
+
+## 018. Conversation state: Postgres transcript, Redis run state
+The full transcript (user, assistant with tool calls, tool results, provider-native blocks) is
+stored in `messages` so the next turn has the same context; history loads the last N messages
+starting at a user turn. While a run is active, Redis holds a per-conversation lock (a second
+message gets 409) and a small state record (`GET /conversations/{id}/state`). The transcript is
+persisted in a cancellation-shielded `finally`, so a client disconnect mid-stream loses nothing.
+Large artifacts go to the UI in full but reach the model as compact summaries (saves tokens on
+Groq's 8K TPM free tier).

@@ -6,6 +6,7 @@ x-api-env: &api-env
   REDIS_URL: redis://redis:6379/0
   JWT_SECRET: ${JWT_SECRET:-local-dev-only-secret-change-me}
   DEMO_PASSWORD: ${DEMO_PASSWORD:-demo-password}
+  MCP_INTERNAL_SECRET: ${MCP_INTERNAL_SECRET:-local-dev-only-mcp-secret-change-me}
 
 services:
   postgres:
@@ -43,6 +44,7 @@ services:
         required: false
     environment:
       <<: *api-env
+      MCP_URL: http://mcp:8001/mcp
     ports:
       - "${API_PORT:-8000}:8000"
     depends_on:
@@ -50,12 +52,35 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      mcp:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)"]
       interval: 10s
       timeout: 5s
       retries: 10
       start_period: 20s
+
+  mcp:
+    build:
+      context: .
+      dockerfile: apps/mcp_server/Dockerfile
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      <<: *api-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
 
   # Optional local LLM: `docker compose --profile ollama up -d`, then
   # `docker compose exec ollama ollama pull qwen3:4b` and set OLLAMA_BASE_URL=http://ollama:11434

@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Annotated, Any
 
 from dotenv import dotenv_values
-from pydantic import Field, SecretStr, field_validator, model_validator
+from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import (
     BaseSettings,
     NoDecode,
@@ -25,6 +25,7 @@ from brand_api.llm.config import LLMSettings
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 DEV_JWT_SECRET = "dev-only-insecure-jwt-secret-change-me"  # noqa: S105 - rejected in prod
+DEV_MCP_SECRET = "dev-only-insecure-mcp-secret-change-me"  # noqa: S105 - rejected in prod
 MIN_PROD_SECRET_LENGTH = 32
 
 
@@ -41,6 +42,15 @@ def _resolve_app_env() -> AppEnv:
 
 def _config_dir() -> Path:
     return Path(os.environ.get("CONFIG_DIR", REPO_ROOT / "config"))
+
+
+class AgentSettings(BaseModel):
+    max_steps: int = Field(default=8, ge=1, le=20)
+    tool_timeout_s: float = Field(default=30, gt=0)
+    generation_timeout_s: float = Field(default=180, gt=0)  # includes 1-2 sampling rounds
+    history_limit: int = Field(default=30, ge=2)
+    max_tool_result_chars: int = Field(default=6000, ge=500)
+    lock_ttl_s: int = Field(default=300, gt=0)
 
 
 class Settings(BaseSettings):
@@ -78,6 +88,11 @@ class Settings(BaseSettings):
     ollama_base_url: str | None = None
     llm: LLMSettings = Field(default_factory=LLMSettings)
 
+    # MCP tool server and agent loop.
+    mcp_url: str = "http://localhost:8001/mcp"
+    mcp_internal_secret: SecretStr = SecretStr(DEV_MCP_SECRET)
+    agent: AgentSettings = Field(default_factory=AgentSettings)
+
     @field_validator("cors_origins", mode="before")
     @classmethod
     def _split_origins(cls, value: Any) -> Any:
@@ -92,6 +107,12 @@ class Settings(BaseSettings):
             if secret == DEV_JWT_SECRET or len(secret) < MIN_PROD_SECRET_LENGTH:
                 raise ValueError(
                     f"JWT_SECRET must be set to a random string of at least "
+                    f"{MIN_PROD_SECRET_LENGTH} characters in production"
+                )
+            mcp_secret = self.mcp_internal_secret.get_secret_value()
+            if mcp_secret == DEV_MCP_SECRET or len(mcp_secret) < MIN_PROD_SECRET_LENGTH:
+                raise ValueError(
+                    f"MCP_INTERNAL_SECRET must be a random string of at least "
                     f"{MIN_PROD_SECRET_LENGTH} characters in production"
                 )
         return self

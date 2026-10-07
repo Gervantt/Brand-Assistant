@@ -17,6 +17,8 @@ dependencies = [
     "pyjwt>=2.15.1",
     "bcrypt>=5.0.0",
     "pydantic[email]>=2.13.5",
+    "sse-starlette>=2.1",
+    "mcp>=2.3",
 ]
 
 [tool.uv.sources]

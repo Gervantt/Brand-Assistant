@@ -1,5 +1,7 @@
 """Builds provider clients from settings. Missing credentials simply disable a provider."""
 
+from collections.abc import Mapping
+
 from brand_api.config import Settings
 from brand_api.llm.anthropic_provider import AnthropicProvider
 from brand_api.llm.base import LLMProvider
@@ -40,5 +42,12 @@ def build_providers(settings: Settings) -> dict[str, LLMProvider]:
     return providers
 
 
-def build_router(settings: Settings, recorder: CallRecorder) -> LLMRouter:
-    return LLMRouter(settings.llm, build_providers(settings), recorder)
+def build_router(
+    settings: Settings,
+    recorder: CallRecorder,
+    providers: Mapping[str, LLMProvider] | None = None,
+) -> LLMRouter:
+    """`providers` overrides credential-based discovery (tests inject scripted providers)."""
+    return LLMRouter(
+        settings.llm, build_providers(settings) if providers is None else providers, recorder
+    )

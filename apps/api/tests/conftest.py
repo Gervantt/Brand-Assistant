@@ -2,6 +2,7 @@
 
 import asyncio
 import os
+import socket
 from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
 
@@ -10,6 +11,7 @@ os.environ["APP_ENV"] = "test"  # must be set before brand_api modules read sett
 import asyncpg
 import httpx
 import pytest
+import uvicorn
 from alembic import command
 from alembic.config import Config
 from asgi_lifespan import LifespanManager
@@ -19,6 +21,8 @@ from brand_api.config import AppEnv, Settings
 from brand_api.db import create_engine, create_sessionmaker, normalize_database_url
 from brand_api.main import create_app
 from brand_api.seed import run_seed
+from brand_mcp.config import McpSettings
+from brand_mcp.server import create_app as create_mcp_app
 from brand_shared.permissions import Role
 
 TEST_DATABASE_URL = os.environ.get(
@@ -26,6 +30,7 @@ TEST_DATABASE_URL = os.environ.get(
 )
 TEST_REDIS_URL = os.environ.get("TEST_REDIS_URL", "redis://localhost:6379/15")
 DEMO_PASSWORD = "demo-password-for-tests"
+MCP_SECRET = "api-test-mcp-secret-" + "x" * 24
 ALEMBIC_INI = Path(__file__).resolve().parents[1] / "alembic.ini"
 
 
@@ -49,29 +54,60 @@ def _upgrade_head(url: str) -> None:
 
 
 @pytest.fixture(scope="session")
-def settings() -> Settings:
+def base_settings() -> Settings:
     return Settings(
         app_env=AppEnv.TEST,
         database_url=TEST_DATABASE_URL,
         redis_url=TEST_REDIS_URL,
         demo_password=DEMO_PASSWORD,
         demo_mode=True,
+        mcp_internal_secret=MCP_SECRET,
     )
 
 
 @pytest.fixture(scope="session")
-async def migrated_db(settings: Settings) -> str:
-    await _ensure_database(settings.database_url)
-    # env.py calls asyncio.run(), so migrations run in a worker thread.
-    await asyncio.to_thread(_upgrade_head, settings.database_url)
-    return settings.database_url
+async def mcp_url(base_settings: Settings, seeded: None) -> AsyncIterator[str]:
+    """The real MCP tool server, served by uvicorn on a free port."""
+    mcp_settings = McpSettings(
+        database_url=TEST_DATABASE_URL,
+        redis_url=TEST_REDIS_URL,
+        mcp_internal_secret=MCP_SECRET,
+        log_level="WARNING",
+    )
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        port = int(sock.getsockname()[1])
+    server = uvicorn.Server(
+        uvicorn.Config(
+            create_mcp_app(mcp_settings), host="127.0.0.1", port=port, log_level="warning"
+        )
+    )
+    task = asyncio.create_task(server.serve())
+    while not server.started:  # noqa: ASYNC110 - uvicorn exposes only a bool flag
+        await asyncio.sleep(0.02)
+    yield f"http://127.0.0.1:{port}/mcp"
+    server.should_exit = True
+    await task
 
 
 @pytest.fixture(scope="session")
-async def seeded(settings: Settings, migrated_db: str) -> None:
-    engine = create_engine(settings.database_url)
+def settings(base_settings: Settings, mcp_url: str) -> Settings:
+    return base_settings.model_copy(update={"mcp_url": mcp_url})
+
+
+@pytest.fixture(scope="session")
+async def migrated_db(base_settings: Settings) -> str:
+    await _ensure_database(base_settings.database_url)
+    # env.py calls asyncio.run(), so migrations run in a worker thread.
+    await asyncio.to_thread(_upgrade_head, base_settings.database_url)
+    return base_settings.database_url
+
+
+@pytest.fixture(scope="session")
+async def seeded(base_settings: Settings, migrated_db: str) -> None:
+    engine = create_engine(base_settings.database_url)
     async with create_sessionmaker(engine)() as session:
-        await run_seed(session, settings)
+        await run_seed(session, base_settings)
     await engine.dispose()
 
 

@@ -42,5 +42,7 @@ def test_prod_refuses_weak_jwt_secret(secret: str | None) -> None:
 
 
 def test_prod_accepts_strong_jwt_secret() -> None:
-    settings = Settings(app_env=AppEnv.PROD, jwt_secret=SecretStr("s" * 48))
+    settings = Settings(
+        app_env=AppEnv.PROD, jwt_secret=SecretStr("s" * 48), mcp_internal_secret=SecretStr("m" * 48)
+    )
     assert settings.app_env is AppEnv.PROD
