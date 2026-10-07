@@ -12,7 +12,7 @@ from brand_api.llm.types import Tier
 from brand_api.logging_setup import configure_logging, get_logger
 from brand_api.middleware import RequestContextMiddleware
 from brand_api.observability.llm_calls import DbCallRecorder
-from brand_api.routes import health
+from brand_api.routes import admin, auth, clients, health
 
 log = get_logger(__name__)
 
@@ -59,6 +59,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # Added last so it wraps everything, including CORS preflight responses.
     app.add_middleware(RequestContextMiddleware)
     app.include_router(health.router)
+    app.include_router(auth.router)
+    app.include_router(clients.router)
+    app.include_router(admin.router)
     return app
 
 

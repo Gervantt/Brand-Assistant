@@ -5,3 +5,4 @@ log_json: true
 llm:
   provider: groq
   fallback: []
+bcrypt_rounds: 4

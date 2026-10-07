@@ -1,4 +1,5 @@
 import pytest
+from pydantic import SecretStr
 
 from brand_api.config import AppEnv, Settings
 
@@ -31,3 +32,15 @@ def test_yaml_profile_values_merge_with_env_overrides(monkeypatch: pytest.Monkey
     llm = Settings().llm
     assert llm.timeout_s == 12
     assert llm.provider == "groq"  # from config/test.yaml
+
+
+@pytest.mark.parametrize("secret", [None, "too-short"])
+def test_prod_refuses_weak_jwt_secret(secret: str | None) -> None:
+    kwargs = {"jwt_secret": secret} if secret else {}
+    with pytest.raises(ValueError, match="JWT_SECRET"):
+        Settings(app_env=AppEnv.PROD, **kwargs)  # type: ignore[arg-type]
+
+
+def test_prod_accepts_strong_jwt_secret() -> None:
+    settings = Settings(app_env=AppEnv.PROD, jwt_secret=SecretStr("s" * 48))
+    assert settings.app_env is AppEnv.PROD

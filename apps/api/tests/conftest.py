@@ -2,7 +2,7 @@
 
 import asyncio
 import os
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
 
 os.environ["APP_ENV"] = "test"  # must be set before brand_api modules read settings
@@ -16,13 +16,16 @@ from asgi_lifespan import LifespanManager
 from fastapi import FastAPI
 
 from brand_api.config import AppEnv, Settings
-from brand_api.db import normalize_database_url
+from brand_api.db import create_engine, create_sessionmaker, normalize_database_url
 from brand_api.main import create_app
+from brand_api.seed import run_seed
+from brand_shared.permissions import Role
 
 TEST_DATABASE_URL = os.environ.get(
     "TEST_DATABASE_URL", "postgresql://brand:brand@localhost:5433/brand_test"
 )
 TEST_REDIS_URL = os.environ.get("TEST_REDIS_URL", "redis://localhost:6379/15")
+DEMO_PASSWORD = "demo-password-for-tests"
 ALEMBIC_INI = Path(__file__).resolve().parents[1] / "alembic.ini"
 
 
@@ -51,6 +54,8 @@ def settings() -> Settings:
         app_env=AppEnv.TEST,
         database_url=TEST_DATABASE_URL,
         redis_url=TEST_REDIS_URL,
+        demo_password=DEMO_PASSWORD,
+        demo_mode=True,
     )
 
 
@@ -62,8 +67,16 @@ async def migrated_db(settings: Settings) -> str:
     return settings.database_url
 
 
+@pytest.fixture(scope="session")
+async def seeded(settings: Settings, migrated_db: str) -> None:
+    engine = create_engine(settings.database_url)
+    async with create_sessionmaker(engine)() as session:
+        await run_seed(session, settings)
+    await engine.dispose()
+
+
 @pytest.fixture
-async def app(settings: Settings, migrated_db: str) -> AsyncIterator[FastAPI]:
+async def app(settings: Settings, seeded: None) -> AsyncIterator[FastAPI]:
     application = create_app(settings)
     async with LifespanManager(application):
         yield application
@@ -74,3 +87,20 @@ async def client(app: FastAPI) -> AsyncIterator[httpx.AsyncClient]:
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as http:
         yield http
+
+
+async def demo_headers(client: httpx.AsyncClient, role: Role) -> dict[str, str]:
+    response = await client.post("/auth/demo-login", json={"role": role.value})
+    assert response.status_code == 200, response.text
+    return {"Authorization": f"Bearer {response.json()['access_token']}"}
+
+
+@pytest.fixture
+async def as_role(client: httpx.AsyncClient) -> "RoleHeaders":
+    async def get(role: Role) -> dict[str, str]:
+        return await demo_headers(client, role)
+
+    return get
+
+
+RoleHeaders = Callable[[Role], Awaitable[dict[str, str]]]
