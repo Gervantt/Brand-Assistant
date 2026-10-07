@@ -7,13 +7,16 @@ import random
 import time
 import uuid
 from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
+from contextlib import AbstractContextManager
 from dataclasses import dataclass, replace
+from datetime import UTC, datetime
 from decimal import Decimal
 
 import structlog
 from pydantic import BaseModel, ValidationError
 
 from brand_api.llm.base import LLMProvider
+from brand_api.llm.cache import ResponseCache
 from brand_api.llm.complexity import CLASSIFIER_PROMPT, classify_heuristic, parse_classifier_answer
 from brand_api.llm.config import LLMSettings
 from brand_api.llm.errors import (
@@ -37,6 +40,7 @@ from brand_api.llm.types import (
 )
 from brand_api.logging_setup import get_logger
 from brand_api.observability.llm_calls import CallRecorder, LLMCallRecord
+from brand_api.observability.tracing import NULL_TRACER, Observation, Tracer
 from brand_shared.json_output import parse_json_model
 
 log = get_logger(__name__)
@@ -57,6 +61,7 @@ class _Outcome:
     is_fallback: bool
     started: float
     ttft_ms: int | None = None
+    first_token_at: datetime | None = None
     streamed: bool = False
 
 
@@ -68,11 +73,15 @@ class LLMRouter:
         recorder: CallRecorder,
         *,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        tracer: Tracer = NULL_TRACER,
+        cache: ResponseCache | None = None,
     ) -> None:
         self.settings = settings
         self._providers = dict(providers)
         self._recorder = recorder
         self._sleep = sleep
+        self._tracer = tracer
+        self._cache = cache
 
     async def aclose(self) -> None:
         for provider in self._providers.values():
@@ -111,29 +120,36 @@ class LLMRouter:
     ) -> ChatResponse:
         ctx = ctx or CallContext()
         request = self._with_defaults(request)
+        chain = self._chain_or_raise(tier)
+        cache_key = self._cache_key(chain[0], tier, request)
+        if (cached := await self._from_cache(cache_key, tier, request, ctx)) is not None:
+            return cached
         failures: list[FailedAttempt] = []
-        for index, ref in enumerate(self._chain_or_raise(tier)):
+        for index, ref in enumerate(chain):
             provider = self._providers[ref.provider]
             attempt = 0
             while True:
                 attempt += 1
                 outcome = _Outcome(ref, tier, attempt, index > 0, time.perf_counter())
-                try:
-                    async with asyncio.timeout(self.settings.timeout_s):
-                        response = await provider.chat(ref.model, request)
-                except (LLMError, TimeoutError) as exc:
-                    error = _as_llm_error(exc)
-                    await self._record_error(outcome, error, ctx)
-                    delay = self._retry_delay(attempt, error)
-                    if delay is None:
-                        failures.append(FailedAttempt(str(ref), error.kind, str(error)))
-                        break
-                    await self._sleep(delay)
-                    continue
-                await self._record_ok(outcome, response, ctx)
-                return response.model_copy(
+                with self._generation(outcome, request, ctx) as observation:
+                    try:
+                        async with asyncio.timeout(self.settings.timeout_s):
+                            response = await provider.chat(ref.model, request)
+                    except (LLMError, TimeoutError) as exc:
+                        error = _as_llm_error(exc)
+                        await self._record_error(outcome, error, ctx, observation)
+                        delay = self._retry_delay(attempt, error)
+                        if delay is None:
+                            failures.append(FailedAttempt(str(ref), error.kind, str(error)))
+                            break
+                        await self._sleep(delay)
+                        continue
+                    await self._record_ok(outcome, response, ctx, observation)
+                final = response.model_copy(
                     update={"provider": ref.provider, "model": ref.model, "is_fallback": index > 0}
                 )
+                await self._to_cache(cache_key, final)
+                return final
         raise AllModelsFailedError(failures)
 
     async def stream(
@@ -142,8 +158,15 @@ class LLMRouter:
         """Fallback/retry is possible only until the first token is emitted."""
         ctx = ctx or CallContext()
         request = self._with_defaults(request)
+        chain = self._chain_or_raise(tier)
+        cache_key = self._cache_key(chain[0], tier, request)
+        if (cached := await self._from_cache(cache_key, tier, request, ctx)) is not None:
+            if cached.content:
+                yield TextDelta(cached.content)
+            yield StreamDone(cached)
+            return
         failures: list[FailedAttempt] = []
-        for index, ref in enumerate(self._chain_or_raise(tier)):
+        for index, ref in enumerate(chain):
             provider = self._providers[ref.provider]
             attempt = 0
             while True:
@@ -151,31 +174,34 @@ class LLMRouter:
                 outcome = _Outcome(
                     ref, tier, attempt, index > 0, time.perf_counter(), streamed=True
                 )
-                try:
-                    async for event in self._attempt_stream(provider, ref.model, request, outcome):
-                        if isinstance(event, StreamDone):
-                            await self._record_ok(outcome, event.response, ctx)
-                            yield StreamDone(
-                                event.response.model_copy(
+                with self._generation(outcome, request, ctx) as observation:
+                    try:
+                        async for event in self._attempt_stream(
+                            provider, ref.model, request, outcome
+                        ):
+                            if isinstance(event, StreamDone):
+                                await self._record_ok(outcome, event.response, ctx, observation)
+                                final = event.response.model_copy(
                                     update={
                                         "provider": ref.provider,
                                         "model": ref.model,
                                         "is_fallback": index > 0,
                                     }
                                 )
-                            )
-                            return
-                        yield event
-                except (LLMError, TimeoutError) as exc:
-                    error = _as_llm_error(exc)
-                    await self._record_error(outcome, error, ctx)
-                    if outcome.ttft_ms is not None:  # tokens already reached the user
-                        raise StreamInterruptedError(str(error)) from exc
-                    delay = self._retry_delay(attempt, error)
-                    if delay is None:
-                        failures.append(FailedAttempt(str(ref), error.kind, str(error)))
-                        break
-                    await self._sleep(delay)
+                                await self._to_cache(cache_key, final)
+                                yield StreamDone(final)
+                                return
+                            yield event
+                    except (LLMError, TimeoutError) as exc:
+                        error = _as_llm_error(exc)
+                        await self._record_error(outcome, error, ctx, observation)
+                        if outcome.ttft_ms is not None:  # tokens already reached the user
+                            raise StreamInterruptedError(str(error)) from exc
+                        delay = self._retry_delay(attempt, error)
+                        if delay is None:
+                            failures.append(FailedAttempt(str(ref), error.kind, str(error)))
+                            break
+                        await self._sleep(delay)
         raise AllModelsFailedError(failures)
 
     async def _attempt_stream(
@@ -194,6 +220,7 @@ class LLMRouter:
                 if isinstance(event, TextDelta):
                     if outcome.ttft_ms is None:
                         outcome.ttft_ms = _elapsed_ms(outcome.started)
+                        outcome.first_token_at = datetime.now(UTC)
                     yield event
                 elif isinstance(event, StreamDone):
                     final = event.response
@@ -261,6 +288,64 @@ class LLMRouter:
 
     # ---- internals -----------------------------------------------------------------------
 
+    def _generation(
+        self, o: _Outcome, request: ChatRequest, ctx: CallContext
+    ) -> AbstractContextManager[Observation]:
+        return self._tracer.observe(
+            f"llm.{ctx.purpose}",
+            as_type="generation",
+            model=str(o.ref),
+            input=[{"role": m.role, "content": m.content} for m in request.messages],
+            model_parameters={
+                "temperature": request.temperature,
+                "max_tokens": request.max_tokens,
+                "tools": len(request.tools),
+            },
+            metadata={"tier": o.tier.value, "attempt": o.attempt, "fallback": o.is_fallback},
+        )
+
+    def _cache_key(self, primary: ModelRef, tier: Tier, request: ChatRequest) -> str | None:
+        return None if self._cache is None else self._cache.key(primary, tier, request)
+
+    async def _to_cache(self, key: str | None, response: ChatResponse) -> None:
+        if self._cache is not None and key is not None:
+            await self._cache.set(key, response)
+
+    async def _from_cache(
+        self, key: str | None, tier: Tier, request: ChatRequest, ctx: CallContext
+    ) -> ChatResponse | None:
+        if self._cache is None or key is None:
+            return None
+        started = time.perf_counter()
+        response = await self._cache.get(key)
+        if response is None:
+            return None
+        ref = ModelRef(response.provider, response.model)
+        saved = cost_usd(self.settings.pricing, ref, response.usage)
+        with self._tracer.observe(
+            f"llm.{ctx.purpose}",
+            as_type="generation",
+            model=str(ref),
+            input=[{"role": m.role, "content": m.content} for m in request.messages],
+            output=response.content,
+            metadata={"cached": True, "cost_saved_usd": float(saved)},
+        ):
+            pass
+        log.info("llm_cache_hit", model=str(ref), saved_usd=float(saved))
+        outcome = _Outcome(ref, tier, 1, False, started)
+        record = self._record(
+            outcome,
+            ctx,
+            status="ok",
+            error_type=None,
+            response=response,
+            latency=_elapsed_ms(started),
+        )
+        await self._recorder.record(
+            replace(record, cached=True, cost_usd=Decimal(0), cost_saved_usd=saved)
+        )
+        return response.model_copy(update={"is_fallback": False})
+
     def _chain_or_raise(self, tier: Tier) -> list[ModelRef]:
         chain = self.chain(tier)
         if not chain:
@@ -285,8 +370,19 @@ class LLMRouter:
         )
         return base * random.uniform(0.5, 1.0)  # noqa: S311 - jitter, not crypto
 
-    async def _record_ok(self, o: _Outcome, response: ChatResponse, ctx: CallContext) -> None:
+    async def _record_ok(
+        self, o: _Outcome, response: ChatResponse, ctx: CallContext, observation: Observation
+    ) -> None:
         latency = _elapsed_ms(o.started)
+        observation.update(
+            output=response.content or [tc.model_dump() for tc in response.tool_calls],
+            usage_details={
+                "input": response.usage.input_tokens,
+                "output": response.usage.output_tokens,
+            },
+            cost_details={"total": float(cost_usd(self.settings.pricing, o.ref, response.usage))},
+            completion_start_time=o.first_token_at,
+        )
         log.info(
             "llm_call",
             model=str(o.ref),
@@ -302,8 +398,11 @@ class LLMRouter:
             self._record(o, ctx, status="ok", error_type=None, response=response, latency=latency)
         )
 
-    async def _record_error(self, o: _Outcome, error: LLMError, ctx: CallContext) -> None:
+    async def _record_error(
+        self, o: _Outcome, error: LLMError, ctx: CallContext, observation: Observation
+    ) -> None:
         latency = _elapsed_ms(o.started)
+        observation.update(level="ERROR", status_message=f"{error.kind}: {str(error)[:300]}")
         log.warning(
             "llm_call",
             model=str(o.ref),

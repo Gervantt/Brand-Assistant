@@ -1,5 +1,9 @@
 name: brand-assistant
 
+# Optional self-hosted Langfuse (profile: observability).
+include:
+  - infra/langfuse/compose.yml
+
 x-api-env: &api-env
   APP_ENV: ${APP_ENV:-local}
   DATABASE_URL: postgresql://brand:brand@postgres:5432/brand

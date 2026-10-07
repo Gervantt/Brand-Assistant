@@ -1,7 +1,7 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 
 from brand_api.auth.deps import require
@@ -16,12 +16,14 @@ from brand_api.auth.schemas import (
 )
 from brand_api.auth.service import EmailTakenError, UnknownClientError, create_user, load_clients
 from brand_api.deps import SessionDep, SettingsDep
+from brand_api.observability.metrics import MetricsReport, build_report
 from brand_shared.db.models import Client, User
 from brand_shared.permissions import Action
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
 UserAdmin = Annotated[Principal, Depends(require(Action.MANAGE_USERS))]
+MetricsViewer = Annotated[Principal, Depends(require(Action.VIEW_METRICS))]
 ClientAdmin = Annotated[Principal, Depends(require(Action.MANAGE_CLIENTS))]
 
 
@@ -115,3 +117,17 @@ async def update_client(
         client.profile = body.profile.model_dump()
     await session.commit()
     return ClientOut.model_validate(client)
+
+
+# ---- metrics -----------------------------------------------------------------------------
+
+
+@router.get("/metrics")
+async def metrics(
+    _: MetricsViewer,
+    session: SessionDep,
+    hours: Annotated[int, Query(ge=1, le=24 * 90)] = 24,
+) -> MetricsReport:
+    """LLM latency (avg/p95), cost per day and per model, error and fallback rates, cache
+    savings — all from `llm_calls`."""
+    return await build_report(session, hours)

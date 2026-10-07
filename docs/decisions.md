@@ -199,3 +199,26 @@ internal MCP tool `ingest_document` (never offered to the model, RBAC `upload_do
 16 MB transport limit for a 10 MB file in base64). Documents are deduplicated per client by
 SHA-256. The demo brand books in `data/brands/<slug>/` are ingested by the MCP server at
 startup in the background (it waits for the API's seed to create the clients).
+
+## 023. Tracing: Langfuse SDK v4 (OpenTelemetry), one trace per request
+The gateway owns all tracing. The agent run is the root observation (`as_type="agent"`) of a
+trace whose id is the run's `trace_id` — the same id that goes into JSON logs, `llm_calls` and
+the MCP service token, so one id correlates everything. Every LLM attempt is a `generation`
+(model, input, usage, cost, TTFT, ERROR level on failed attempts), including MCP-sampling
+calls made from inside tools; every tool call is a `tool` observation. Without keys the tracer
+is a no-op. Locally Langfuse v4 runs under the `observability` compose profile with a
+pre-provisioned project; note that v4 runs in *events-only* mode, so the read API is
+`/api/public/v2/observations?traceId=…` (the legacy `/traces` endpoint is disabled).
+
+## 024. LLM response cache in Redis
+Identical requests (same primary model, tier, messages, tools and parameters) are answered
+from Redis (TTL 1 h). Hits are rows in `llm_calls` with `cached=true`, `cost_usd=0` and
+`cost_saved_usd` = what the call would have cost, so savings are visible in
+`/admin/metrics`. Only successful responses are cached; Redis failures degrade to a miss.
+The cache is off in the test profile so scripted providers see every call.
+
+## 025. /admin/metrics from llm_calls
+Window-based (`?hours=`, default 24) aggregates computed in SQL: avg and p95 latency
+(`percentile_cont`, cache hits excluded), cost per day and per model, error rate, fallback rate
+(share of successful calls served by a fallback model), cache hits and savings, call counts per
+purpose (agent / sampling / classifier).

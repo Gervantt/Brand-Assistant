@@ -10,11 +10,13 @@ from brand_api.agent.orchestrator import Agent
 from brand_api.config import Settings, get_settings
 from brand_api.db import create_engine, create_sessionmaker
 from brand_api.llm.base import LLMProvider
+from brand_api.llm.cache import ResponseCache
 from brand_api.llm.registry import build_router
 from brand_api.llm.types import Tier
 from brand_api.logging_setup import configure_logging, get_logger
 from brand_api.middleware import RequestContextMiddleware
 from brand_api.observability.llm_calls import DbCallRecorder
+from brand_api.observability.tracing import Tracer
 from brand_api.routes import admin, auth, clients, conversations, documents, health, plans
 
 log = get_logger(__name__)
@@ -33,14 +35,31 @@ def create_app(
         app.state.settings = settings
         app.state.engine = engine
         sessionmaker = create_sessionmaker(engine)
-        llm = build_router(settings, DbCallRecorder(sessionmaker), llm_providers)
+        tracer = Tracer.create(
+            public_key=settings.langfuse_public_key,
+            secret_key=(
+                settings.langfuse_secret_key.get_secret_value()
+                if settings.langfuse_secret_key
+                else None
+            ),
+            host=settings.langfuse_host,
+            environment=settings.app_env.value,
+            release=settings.app_version,
+        )
+        llm = build_router(
+            settings,
+            DbCallRecorder(sessionmaker),
+            llm_providers,
+            tracer=tracer,
+            cache=ResponseCache(redis, settings.llm.cache_ttl_s),
+        )
         mcp = McpGateway(
             settings.mcp_url,
             settings.mcp_internal_secret.get_secret_value(),
             llm,
             read_timeout_s=settings.agent.generation_timeout_s,
         )
-        app.state.agent = Agent(llm, mcp, settings.agent)
+        app.state.agent = Agent(llm, mcp, settings.agent, tracer)
         app.state.sessionmaker = sessionmaker
         app.state.redis = redis
         app.state.llm = llm
@@ -55,6 +74,7 @@ def create_app(
             yield
         finally:
             await llm.aclose()
+            tracer.shutdown()  # flush pending spans
             await redis.aclose()
             await engine.dispose()
             log.info("shutdown")

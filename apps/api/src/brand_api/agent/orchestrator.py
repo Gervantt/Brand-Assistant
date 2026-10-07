@@ -52,6 +52,7 @@ from brand_api.llm.types import (
     ToolCall,
     ToolSpec,
 )
+from brand_api.observability.tracing import NULL_TRACER, Tracer
 from brand_shared.logging_setup import get_logger
 from brand_shared.permissions import Tool
 
@@ -104,10 +105,17 @@ class _Turn:
 
 
 class Agent:
-    def __init__(self, router: LLMRouter, mcp: McpGateway, settings: AgentSettings) -> None:
+    def __init__(
+        self,
+        router: LLMRouter,
+        mcp: McpGateway,
+        settings: AgentSettings,
+        tracer: Tracer = NULL_TRACER,
+    ) -> None:
         self.router = router
         self.mcp = mcp
         self.settings = settings
+        self.tracer = tracer
 
     async def run(self, run: RunInput, state: RunState) -> AsyncIterator[AgentEvent]:
         ctx = CallContext(purpose="agent", user_id=run.principal.id, trace_id=run.trace_id)
@@ -124,15 +132,40 @@ class Agent:
             *run.history,
             Message(role="user", content=run.user_text),
         ]
-        try:
-            async with self.mcp.session(run.principal, trace_id=run.trace_id) as mcp:
-                specs = model_tool_specs(await mcp.list_tools(), run.principal)
-                async for event in self._loop(
-                    run, state=state, messages=messages, specs=specs, mcp=mcp, tier=tier, ctx=ctx
-                ):
-                    yield event
-        except Exception as exc:  # the MCP client's task group wraps errors in ExceptionGroups
-            yield self._failure(exc, run, state)
+        with self.tracer.observe(
+            "agent.run",
+            as_type="agent",
+            trace_id=run.trace_id,
+            input=run.user_text,
+            metadata={
+                "conversation_id": str(run.conversation_id),
+                "client": run.client_name,
+                "role": run.principal.role.value,
+                "tier": tier.value,
+            },
+        ) as root:
+            try:
+                async with self.mcp.session(run.principal, trace_id=run.trace_id) as mcp:
+                    specs = model_tool_specs(await mcp.list_tools(), run.principal)
+                    async for event in self._loop(
+                        run,
+                        state=state,
+                        messages=messages,
+                        specs=specs,
+                        mcp=mcp,
+                        tier=tier,
+                        ctx=ctx,
+                    ):
+                        yield event
+            except Exception as exc:  # the MCP client's task group wraps errors in groups
+                yield self._failure(exc, run, state)
+            final = state.new_messages[-1] if state.new_messages else None
+            root.update(
+                output=final.content if final and final.role == "assistant" else None,
+                level="ERROR" if state.error else "DEFAULT",
+                status_message=state.error,
+                metadata={"steps": state.steps, "artifacts": len(state.artifacts)},
+            )
 
     async def _loop(
         self,
@@ -264,13 +297,19 @@ class Agent:
             else self.settings.tool_timeout_s
         )
         started = time.perf_counter()
-        try:
-            async with asyncio.timeout(timeout):
-                outcome = await mcp.call(call.name, arguments)
-        except TimeoutError:
-            respond('{"error": "Инструмент не ответил вовремя."}')
-            yield ToolEndEvent(call.id, call.name, ok=False, summary="Превышено время ожидания")
-            return
+        with self.tracer.observe(f"tool.{call.name}", as_type="tool", input=call.arguments) as span:
+            try:
+                async with asyncio.timeout(timeout):
+                    outcome = await mcp.call(call.name, arguments)
+            except TimeoutError:
+                span.update(level="ERROR", status_message="timeout")
+                respond('{"error": "Инструмент не ответил вовремя."}')
+                yield ToolEndEvent(call.id, call.name, ok=False, summary="Превышено время ожидания")
+                return
+            span.update(
+                output=outcome.data if outcome.ok else outcome.text,
+                level="DEFAULT" if outcome.ok else "ERROR",
+            )
         log.info(
             "tool_executed",
             tool=call.name,

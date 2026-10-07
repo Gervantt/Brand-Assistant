@@ -58,6 +58,8 @@ class LLMSettings(BaseModel):
     max_tokens: int = Field(default=2048, gt=0)
     temperature: float = Field(default=0.4, ge=0, le=2)
     pricing: dict[str, ModelPrice] = Field(default_factory=lambda: dict(DEFAULT_PRICING))
+    cache_enabled: bool = True
+    cache_ttl_s: int = Field(default=3600, gt=0)
 
     @model_validator(mode="after")
     def _validate_refs(self) -> "LLMSettings":

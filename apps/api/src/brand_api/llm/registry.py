@@ -5,9 +5,11 @@ from collections.abc import Mapping
 from brand_api.config import Settings
 from brand_api.llm.anthropic_provider import AnthropicProvider
 from brand_api.llm.base import LLMProvider
+from brand_api.llm.cache import ResponseCache
 from brand_api.llm.openai_compat import GROQ_BASE_URL, OpenAICompatOptions, OpenAICompatProvider
 from brand_api.llm.router import LLMRouter
 from brand_api.observability.llm_calls import CallRecorder
+from brand_api.observability.tracing import NULL_TRACER, Tracer
 
 
 def build_providers(settings: Settings) -> dict[str, LLMProvider]:
@@ -46,8 +48,15 @@ def build_router(
     settings: Settings,
     recorder: CallRecorder,
     providers: Mapping[str, LLMProvider] | None = None,
+    *,
+    tracer: Tracer = NULL_TRACER,
+    cache: ResponseCache | None = None,
 ) -> LLMRouter:
     """`providers` overrides credential-based discovery (tests inject scripted providers)."""
     return LLMRouter(
-        settings.llm, build_providers(settings) if providers is None else providers, recorder
+        settings.llm,
+        build_providers(settings) if providers is None else providers,
+        recorder,
+        tracer=tracer,
+        cache=cache if settings.llm.cache_enabled else None,
     )

@@ -91,6 +91,11 @@ class Settings(BaseSettings):
     ollama_base_url: str | None = None
     llm: LLMSettings = Field(default_factory=LLMSettings)
 
+    # Langfuse tracing (empty keys = disabled).
+    langfuse_public_key: str | None = None
+    langfuse_secret_key: SecretStr | None = None
+    langfuse_host: str | None = None
+
     # MCP tool server and agent loop.
     mcp_url: str = "http://localhost:8001/mcp"
     mcp_internal_secret: SecretStr = SecretStr(DEV_MCP_SECRET)
