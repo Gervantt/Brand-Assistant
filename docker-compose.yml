@@ -106,6 +106,18 @@ services:
       retries: 10
       start_period: 10s
 
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        VITE_API_URL: ${VITE_API_URL:-http://localhost:8000}
+    ports:
+      - "${WEB_PORT:-5173}:80"
+    depends_on:
+      api:
+        condition: service_healthy
+
   # Optional local LLM: `docker compose --profile ollama up -d`, then
   # `docker compose exec ollama ollama pull qwen3:4b` and set OLLAMA_BASE_URL=http://ollama:11434
   ollama:

@@ -222,3 +222,14 @@ Window-based (`?hours=`, default 24) aggregates computed in SQL: avg and p95 lat
 (`percentile_cont`, cache hits excluded), cost per day and per model, error rate, fallback rate
 (share of successful calls served by a fallback model), cache hits and savings, call counts per
 purpose (agent / sampling / classifier).
+
+## 026. Web UI: Vite + React + TypeScript + Mantine, minimal state
+Mantine gives tables, cards, AppShell, Dropzone and notifications out of the box, which keeps the
+UI at ~10% of the effort. No state library: auth and the selected client live in two React
+contexts; the chat turn is a pure reducer over SSE events (`chat/turn.ts`, unit-tested with
+Vitest). SSE goes through `@microsoft/fetch-event-source` (EventSource can't POST or send an
+`Authorization` header) with auto-reconnect disabled — a retry would re-run the agent.
+`react-markdown` renders answers. A tiny external store raises the "server is waking up" banner
+when a request takes >5 s or fails at the network level (Render free tier cold start). The API
+base URL comes from `VITE_API_URL`. Locally the same static build is served by nginx in compose
+(`:5173`); in production Vercel hosts it.
