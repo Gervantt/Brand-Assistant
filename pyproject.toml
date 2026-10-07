@@ -9,16 +9,18 @@ dependencies = []
 package = false
 
 [tool.uv.workspace]
-members = ["packages/shared", "apps/api"]
+members = ["packages/shared", "apps/api", "apps/mcp_server"]
 
 [tool.uv.sources]
 brand-shared = { workspace = true }
 brand-api = { workspace = true }
+brand-mcp = { workspace = true }
 
 [dependency-groups]
 dev = [
     "brand-shared",
     "brand-api",
+    "brand-mcp",
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
     "ruff>=0.7",
@@ -44,6 +46,8 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "**/tests/**" = ["S101", "S105", "S106", "PLR2004", "PLR0917"]  # fixtures are positional
 "**/alembic/versions/*" = ["N999"]
+# MCP tools/resolvers: the framework binds arguments by name; signatures mirror the tool schema.
+"apps/mcp_server/src/brand_mcp/tools/*" = ["PLR0917"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["brand_api", "brand_shared", "brand_mcp"]
@@ -52,7 +56,7 @@ known-first-party = ["brand_api", "brand_shared", "brand_mcp"]
 python_version = "3.12"
 strict = true
 plugins = ["pydantic.mypy"]
-mypy_path = ["packages/shared/src", "apps/api/src", "apps/api"]
+mypy_path = ["packages/shared/src", "apps/api/src", "apps/api", "apps/mcp_server/src", "apps/mcp_server/tests"]
 explicit_package_bases = true
 namespace_packages = true
 exclude = ["apps/web/", "alembic/versions/"]
@@ -65,5 +69,5 @@ ignore_missing_imports = true
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "session"
 asyncio_default_test_loop_scope = "session"
-testpaths = ["apps/api/tests", "packages/shared/tests"]
+testpaths = ["apps/api/tests", "apps/mcp_server/tests"]
 addopts = "-ra"

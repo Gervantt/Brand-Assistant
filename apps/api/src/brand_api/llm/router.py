@@ -37,6 +37,7 @@ from brand_api.llm.types import (
 )
 from brand_api.logging_setup import get_logger
 from brand_api.observability.llm_calls import CallRecorder, LLMCallRecord
+from brand_shared.json_output import parse_json_model
 
 log = get_logger(__name__)
 
@@ -346,14 +347,6 @@ class LLMRouter:
             trace_id=ctx.trace_id,
             request_id=structlog.contextvars.get_contextvars().get("request_id"),
         )
-
-
-def parse_json_model[M: BaseModel](schema: type[M], text: str) -> M:
-    """Validate model output, tolerating markdown fences and leading/trailing prose."""
-    start, end = text.find("{"), text.rfind("}")
-    if start == -1 or end <= start:
-        raise ValueError("no JSON object found in the response")
-    return schema.model_validate_json(text[start : end + 1])
 
 
 def _as_llm_error(exc: BaseException) -> LLMError:

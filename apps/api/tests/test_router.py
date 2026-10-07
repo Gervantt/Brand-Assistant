@@ -15,10 +15,11 @@ from brand_api.llm.errors import (
     StreamInterruptedError,
     StructuredOutputError,
 )
-from brand_api.llm.router import CallContext, LLMRouter, parse_json_model
+from brand_api.llm.router import CallContext, LLMRouter
 from brand_api.llm.types import ChatRequest, Message, StreamDone, TextDelta, Tier
 from brand_api.observability.llm_calls import DbCallRecorder, LLMCallRecord
 from brand_shared.db.models import LLMCall
+from brand_shared.json_output import parse_json_model
 from tests.fakes import FailMidStream, Hang, ScriptedProvider, error, reply
 
 

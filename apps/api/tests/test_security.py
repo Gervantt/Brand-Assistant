@@ -53,7 +53,7 @@ def test_token_signed_with_other_secret_is_rejected() -> None:
 def test_alg_none_token_is_rejected() -> None:
     forged = jwt.encode(
         {"sub": str(uuid.uuid4()), "type": "access", "exp": 9_999_999_999},
-        key=None,
+        key="",
         algorithm="none",
     )
     with pytest.raises(jwt.InvalidTokenError):

@@ -1,0 +1,16 @@
+[project]
+name = "brand-mcp"
+version = "0.1.0"
+description = "MCP tool server: brand-book search, client profile, content generation, publishing"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "brand-shared",
+    "mcp>=1.20",
+]
+
+[tool.uv.sources]
+brand-shared = { workspace = true }
+
+[build-system]
+requires = ["uv_build>=0.9,<0.13"]
+build-backend = "uv_build"

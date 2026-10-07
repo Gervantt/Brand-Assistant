@@ -1,19 +1,21 @@
 """ORM models shared by the API gateway and the MCP server."""
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import (
     CheckConstraint,
     Column,
+    Date,
     DateTime,
     ForeignKey,
     Index,
     Numeric,
     String,
     Table,
+    Text,
     func,
 )
 from sqlalchemy.dialects.postgresql import JSONB
@@ -89,3 +91,67 @@ class LLMCall(Base):
     request_id: Mapped[str | None] = mapped_column(String(64))
 
     __table_args__ = (Index("ix_llm_calls_model_created", "model", "created_at"),)
+
+
+class ContentPlanRecord(Base):
+    """An approved (published) content plan — the only business write an agent tool performs."""
+
+    __tablename__ = "content_plans"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    client_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("clients.id", ondelete="CASCADE"), index=True
+    )
+    source_draft_id: Mapped[str] = mapped_column(String(64), unique=True)  # idempotent publish
+    title: Mapped[str] = mapped_column(String(200))
+    period_start: Mapped[date] = mapped_column(Date)
+    period_end: Mapped[date] = mapped_column(Date)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    status: Mapped[str] = mapped_column(String(16), default="approved")
+    created_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL")
+    )
+    approved_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL")
+    )
+    approved_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class Conversation(Base):
+    __tablename__ = "conversations"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    client_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("clients.id", ondelete="CASCADE"))
+    title: Mapped[str] = mapped_column(String(200), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (Index("ix_conversations_user_client", "user_id", "client_id", "updated_at"),)
+
+
+class ChatMessage(Base):
+    """Full agent transcript, including tool calls and results, so later turns keep context."""
+
+    __tablename__ = "messages"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    conversation_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("conversations.id", ondelete="CASCADE")
+    )
+    seq: Mapped[int] = mapped_column()
+    role: Mapped[str] = mapped_column(String(16))  # user | assistant | tool
+    content: Mapped[str] = mapped_column(Text, default="")
+    tool_calls: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, default=list)
+    tool_call_id: Mapped[str | None] = mapped_column(String(128))
+    tool_name: Mapped[str | None] = mapped_column(String(64))
+    native: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    artifacts: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, default=list)
+    meta: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (Index("uq_messages_conversation_seq", "conversation_id", "seq", unique=True),)
