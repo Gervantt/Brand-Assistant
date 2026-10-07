@@ -5,9 +5,11 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     CheckConstraint,
     Column,
+    Computed,
     Date,
     DateTime,
     ForeignKey,
@@ -18,7 +20,7 @@ from sqlalchemy import (
     Text,
     func,
 )
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from brand_shared.db.base import Base
@@ -155,3 +157,45 @@ class ChatMessage(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     __table_args__ = (Index("uq_messages_conversation_seq", "conversation_id", "seq", unique=True),)
+
+
+EMBEDDING_DIM = 384  # paraphrase-multilingual-MiniLM-L12-v2; Gemini is truncated to the same size
+
+
+class Document(Base):
+    __tablename__ = "documents"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    client_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("clients.id", ondelete="CASCADE"), index=True
+    )
+    filename: Mapped[str] = mapped_column(String(255))
+    title: Mapped[str] = mapped_column(String(255))
+    content_type: Mapped[str] = mapped_column(String(32))  # md | pdf | docx | txt
+    sha256: Mapped[str] = mapped_column(String(64))
+    size_bytes: Mapped[int] = mapped_column()
+    chunk_count: Mapped[int] = mapped_column(default=0)
+    uploaded_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL")
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (Index("uq_documents_client_sha", "client_id", "sha256", unique=True),)
+
+
+class Chunk(Base):
+    __tablename__ = "chunks"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    document_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("documents.id", ondelete="CASCADE"), index=True
+    )
+    client_id: Mapped[uuid.UUID] = mapped_column(index=True)  # denormalised for filtering
+    ord: Mapped[int] = mapped_column()
+    section: Mapped[str] = mapped_column(String(500), default="")
+    text: Mapped[str] = mapped_column(Text)
+    embedding: Mapped[list[float]] = mapped_column(Vector(EMBEDDING_DIM))
+    tsv: Mapped[str] = mapped_column(
+        TSVECTOR,
+        Computed("to_tsvector('russian', coalesce(section, '') || ' ' || text)", persisted=True),
+    )

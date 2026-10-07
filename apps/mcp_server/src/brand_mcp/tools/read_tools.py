@@ -60,5 +60,5 @@ def register(server: MCPServer, deps: Deps) -> None:
             query=query,
             hits=hits,
             confidence=round(confidence, 3),
-            found=confidence >= deps.settings.brandbook_min_confidence,
+            found=confidence >= deps.retriever.threshold,
         )

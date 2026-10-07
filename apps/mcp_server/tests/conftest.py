@@ -27,6 +27,8 @@ from sqlalchemy import select
 from brand_api.config import AppEnv, Settings
 from brand_api.seed import run_seed
 from brand_mcp.config import McpSettings
+from brand_mcp.deps import Deps
+from brand_mcp.rag.seed import seed_documents
 from brand_mcp.server import create_app
 from brand_shared.db.engine import create_engine, create_sessionmaker, normalize_database_url
 from brand_shared.db.models import Client as ClientRow
@@ -39,7 +41,10 @@ TEST_DATABASE_URL = os.environ.get(
 )
 TEST_REDIS_URL = os.environ.get("TEST_REDIS_URL", "redis://localhost:6379/15")
 SECRET = "mcp-test-secret-" + "x" * 24
-ALEMBIC_INI = Path(__file__).resolve().parents[2] / "api" / "alembic.ini"
+REPO_ROOT = Path(__file__).resolve().parents[3]
+ALEMBIC_INI = REPO_ROOT / "apps" / "api" / "alembic.ini"
+BRANDS_DIR = REPO_ROOT / "data" / "brands"
+MODEL_CACHE = str(REPO_ROOT / ".cache" / "fastembed")
 
 
 def free_port() -> int:
@@ -85,6 +90,7 @@ def mcp_settings() -> McpSettings:
         redis_url=TEST_REDIS_URL,
         mcp_internal_secret=SecretStr(SECRET),
         log_level="WARNING",
+        model_cache_dir=MODEL_CACHE,
     )
 
 
@@ -101,6 +107,14 @@ async def mcp_url(mcp_settings: McpSettings) -> AsyncIterator[str]:
     yield f"http://127.0.0.1:{port}/mcp"
     server.should_exit = True
     await task
+
+
+@pytest.fixture(scope="session")
+async def brandbooks(mcp_url: str, mcp_settings: McpSettings) -> None:
+    """Demo brand books ingested with the real embedding model (idempotent)."""
+    deps = Deps.create(mcp_settings)
+    await seed_documents(deps, BRANDS_DIR, attempts=1)
+    await deps.aclose()
 
 
 class DemoIds:

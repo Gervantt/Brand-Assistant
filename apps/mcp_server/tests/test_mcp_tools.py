@@ -82,6 +82,7 @@ async def test_tool_catalog(mcp_url: str, ids: DemoIds) -> None:
         "write_post",
         "create_designer_brief",
         "publish_content_plan",
+        "ingest_document",  # internal: the gateway never offers it to the model
     }
     plan_schema = tools["create_content_plan"].input_schema
     assert "client_id" in plan_schema["properties"]
@@ -104,16 +105,6 @@ async def test_profile_respects_client_access(mcp_url: str, ids: DemoIds) -> Non
     assert data(own)["name"] == "Bean There"
     assert foreign.is_error
     assert "Клиент недоступен" in text_of(foreign)
-
-
-async def test_search_reports_not_found_without_documents(mcp_url: str, ids: DemoIds) -> None:
-    async with connect(mcp_url, token_for(ids, Role.VIEWER)) as client:
-        result = await client.call_tool(
-            "search_brandbook",
-            {"client_id": str(ids.clients["bean-there"]), "query": "какой тон голоса?"},
-        )
-    assert data(result)["found"] is False
-    assert data(result)["hits"] == []
 
 
 async def test_denied_generation_never_samples_the_llm(mcp_url: str, ids: DemoIds) -> None:

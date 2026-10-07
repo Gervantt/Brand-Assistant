@@ -1,10 +1,16 @@
 """Structured JSON logging; every record carries the request_id bound by the middleware."""
 
+import json
 import logging
 import sys
+from typing import Any
 
 import structlog
 from structlog.typing import Processor
+
+
+def _dumps(obj: Any, **kwargs: Any) -> str:
+    return json.dumps(obj, ensure_ascii=False, **kwargs)  # keep Cyrillic readable in logs
 
 
 def configure_logging(level: str = "INFO", json_logs: bool = True) -> None:
@@ -16,7 +22,9 @@ def configure_logging(level: str = "INFO", json_logs: bool = True) -> None:
         structlog.processors.StackInfoRenderer(),
     ]
     renderer: Processor = (
-        structlog.processors.JSONRenderer() if json_logs else structlog.dev.ConsoleRenderer()
+        structlog.processors.JSONRenderer(serializer=_dumps)
+        if json_logs
+        else structlog.dev.ConsoleRenderer()
     )
 
     structlog.configure(

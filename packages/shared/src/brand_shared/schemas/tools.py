@@ -48,3 +48,10 @@ class PublishResult(BaseModel):
     items: int
     approved_at: datetime
     already_published: bool = False
+
+
+class IngestDocumentResult(BaseModel):
+    document_id: uuid.UUID
+    title: str
+    chunks: int
+    duplicate: bool

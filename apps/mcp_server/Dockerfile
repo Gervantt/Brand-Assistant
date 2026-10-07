@@ -25,7 +25,12 @@ COPY apps/mcp_server apps/mcp_server
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --package brand-mcp --no-editable
 
-RUN useradd --create-home --uid 10001 app
+# Demo brand books, ingested at startup (idempotent).
+COPY data/brands data/brands
+ENV SEED_DOCUMENTS_DIR=/app/data/brands \
+    MODEL_CACHE_DIR=/models
+
+RUN useradd --create-home --uid 10001 app && mkdir -p /models && chown app /models
 USER app
 
 EXPOSE 8001

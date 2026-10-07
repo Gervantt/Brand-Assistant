@@ -5,8 +5,11 @@ description = "MCP tool server: brand-book search, client profile, content gener
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "brand-shared",
+    "fastembed>=0.8.1",
     "mcp>=1.20",
     "pydantic-settings>=2.6",
+    "pypdf>=6.19.0",
+    "python-docx>=1.2.0",
     "redis>=5.2",
     "starlette>=0.40",
     "uvicorn>=0.32",
