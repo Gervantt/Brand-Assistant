@@ -7,8 +7,11 @@ from redis.asyncio import Redis
 
 from brand_api.config import Settings, get_settings
 from brand_api.db import create_engine, create_sessionmaker
+from brand_api.llm.registry import build_router
+from brand_api.llm.types import Tier
 from brand_api.logging_setup import configure_logging, get_logger
 from brand_api.middleware import RequestContextMiddleware
+from brand_api.observability.llm_calls import DbCallRecorder
 from brand_api.routes import health
 
 log = get_logger(__name__)
@@ -24,12 +27,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         redis = Redis.from_url(settings.redis_url, decode_responses=True, health_check_interval=30)
         app.state.settings = settings
         app.state.engine = engine
-        app.state.sessionmaker = create_sessionmaker(engine)
+        sessionmaker = create_sessionmaker(engine)
+        llm = build_router(settings, DbCallRecorder(sessionmaker))
+        app.state.sessionmaker = sessionmaker
         app.state.redis = redis
-        log.info("startup", env=settings.app_env.value, version=settings.app_version)
+        app.state.llm = llm
+        log.info(
+            "startup",
+            env=settings.app_env.value,
+            version=settings.app_version,
+            llm_provider=settings.llm.provider,
+            llm_chain_complex=[str(ref) for ref in llm.chain(Tier.COMPLEX)],
+        )
         try:
             yield
         finally:
+            await llm.aclose()
             await redis.aclose()
             await engine.dispose()
             log.info("shutdown")

@@ -17,3 +17,17 @@ def test_test_profile_yaml_is_loaded() -> None:
     settings = Settings()
     assert settings.app_env is AppEnv.TEST
     assert settings.log_level == "WARNING"
+
+
+def test_switching_provider_is_one_env_var(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("LLM__PROVIDER", "anthropic")
+    llm = Settings().llm
+    assert llm.provider == "anthropic"
+    assert llm.providers["anthropic"].complex == "claude-opus-5-5"
+
+
+def test_yaml_profile_values_merge_with_env_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("LLM__TIMEOUT_S", "12")
+    llm = Settings().llm
+    assert llm.timeout_s == 12
+    assert llm.provider == "groq"  # from config/test.yaml

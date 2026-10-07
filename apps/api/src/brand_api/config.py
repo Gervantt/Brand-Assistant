@@ -21,6 +21,8 @@ from pydantic_settings import (
     YamlConfigSettingsSource,
 )
 
+from brand_api.llm.config import LLMSettings
+
 REPO_ROOT = Path(__file__).resolve().parents[4]
 
 
@@ -41,7 +43,11 @@ def _config_dir() -> Path:
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env", env_ignore_empty=True, extra="ignore", frozen=True
+        env_file=".env",
+        env_ignore_empty=True,
+        env_nested_delimiter="__",
+        extra="ignore",
+        frozen=True,
     )
 
     app_env: AppEnv = AppEnv.LOCAL
@@ -56,6 +62,13 @@ class Settings(BaseSettings):
     )
 
     jwt_secret: SecretStr = SecretStr("change-me-in-env")
+
+    # LLM providers: a provider is enabled only when its credential/URL is set.
+    groq_api_key: SecretStr | None = None
+    openai_api_key: SecretStr | None = None
+    anthropic_api_key: SecretStr | None = None
+    ollama_base_url: str | None = None
+    llm: LLMSettings = Field(default_factory=LLMSettings)
 
     @field_validator("cors_origins", mode="before")
     @classmethod
