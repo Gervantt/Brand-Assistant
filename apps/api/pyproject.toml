@@ -12,6 +12,8 @@ dependencies = [
     "alembic>=1.14",
     "redis>=5.2",
     "structlog>=24.4",
+    "openai>=3.26.0",
+    "anthropic>=1.11.0",
 ]
 
 [tool.uv.sources]
