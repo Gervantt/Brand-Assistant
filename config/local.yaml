@@ -1,0 +1,5 @@
+# Local profile: docker compose, Ollama optional, self-hosted Langfuse, reranker on.
+log_level: INFO
+log_json: true
+cors_origins:
+  - http://localhost:5173

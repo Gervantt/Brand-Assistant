@@ -1,0 +1,3 @@
+# Production profile: Render + Neon + Upstash + Groq + Langfuse Cloud, reranker off.
+log_level: INFO
+log_json: true

@@ -1,0 +1,3 @@
+# Test profile: used by pytest and the compose smoke test.
+log_level: WARNING
+log_json: true

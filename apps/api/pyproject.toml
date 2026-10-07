@@ -1,0 +1,22 @@
+[project]
+name = "brand-api"
+version = "0.1.0"
+description = "API gateway: auth, agent orchestrator, LLM router, observability"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "brand-shared",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "pydantic-settings[yaml]>=2.6",
+    "asyncpg>=0.30",
+    "alembic>=1.14",
+    "redis>=5.2",
+    "structlog>=24.4",
+]
+
+[tool.uv.sources]
+brand-shared = { workspace = true }
+
+[build-system]
+requires = ["uv_build>=0.9,<0.13"]
+build-backend = "uv_build"
