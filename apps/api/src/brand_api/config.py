@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Annotated, Any
 
 from dotenv import dotenv_values
-from pydantic import Field, SecretStr, field_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import (
     BaseSettings,
     NoDecode,
@@ -24,6 +24,8 @@ from pydantic_settings import (
 from brand_api.llm.config import LLMSettings
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
+DEV_JWT_SECRET = "dev-only-insecure-jwt-secret-change-me"  # noqa: S105 - rejected in prod
+MIN_PROD_SECRET_LENGTH = 32
 
 
 class AppEnv(StrEnum):
@@ -61,7 +63,13 @@ class Settings(BaseSettings):
         default_factory=lambda: ["http://localhost:5173"]
     )
 
-    jwt_secret: SecretStr = SecretStr("change-me-in-env")
+    jwt_secret: SecretStr = SecretStr(DEV_JWT_SECRET)
+    jwt_ttl_minutes: int = Field(default=12 * 60, gt=0)
+    bcrypt_rounds: int = Field(default=12, ge=4, le=16)
+    allow_registration: bool = True
+    # Demo mode: seed demo accounts and allow passwordless "log in as <role>" on the login page.
+    demo_mode: bool = True
+    demo_password: SecretStr | None = None
 
     # LLM providers: a provider is enabled only when its credential/URL is set.
     groq_api_key: SecretStr | None = None
@@ -76,6 +84,17 @@ class Settings(BaseSettings):
         if isinstance(value, str):
             return [origin.strip() for origin in value.split(",") if origin.strip()]
         return value
+
+    @model_validator(mode="after")
+    def _require_real_secrets_in_prod(self) -> "Settings":
+        if self.app_env is AppEnv.PROD:
+            secret = self.jwt_secret.get_secret_value()
+            if secret == DEV_JWT_SECRET or len(secret) < MIN_PROD_SECRET_LENGTH:
+                raise ValueError(
+                    f"JWT_SECRET must be set to a random string of at least "
+                    f"{MIN_PROD_SECRET_LENGTH} characters in production"
+                )
+        return self
 
     @classmethod
     def settings_customise_sources(
