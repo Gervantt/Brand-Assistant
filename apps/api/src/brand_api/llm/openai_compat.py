@@ -13,6 +13,7 @@ from brand_api.llm.errors import LLMError
 from brand_api.llm.types import (
     ChatRequest,
     ChatResponse,
+    KeepAlive,
     Message,
     StreamDone,
     StreamEvent,
@@ -127,10 +128,12 @@ class OpenAICompatProvider:
             stream = await self._client.chat.completions.create(**params)
             async for chunk in stream:
                 raw_usage = chunk.usage or _groq_usage(chunk.model_extra) or raw_usage
+                emitted = False
                 for choice in chunk.choices:
                     delta = choice.delta
                     if delta.content:
                         text_parts.append(delta.content)
+                        emitted = True
                         yield TextDelta(delta.content)
                     for tc in delta.tool_calls or []:
                         slot = calls.setdefault(tc.index, {"id": "", "name": "", "arguments": ""})
@@ -142,6 +145,8 @@ class OpenAICompatProvider:
                             slot["arguments"] += tc.function.arguments
                     if choice.finish_reason:
                         finish_reason = choice.finish_reason
+                if not emitted:  # reasoning / tool-call deltas: alive but nothing to show
+                    yield KeepAlive()
         except openai.OpenAIError as exc:
             raise _map_error(exc) from exc
 

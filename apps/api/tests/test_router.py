@@ -20,7 +20,7 @@ from brand_api.llm.types import ChatRequest, Message, StreamDone, TextDelta, Tie
 from brand_api.observability.llm_calls import DbCallRecorder, LLMCallRecord
 from brand_shared.db.models import LLMCall
 from brand_shared.json_output import parse_json_model
-from tests.fakes import FailMidStream, Hang, ScriptedProvider, error, reply
+from tests.fakes import FailMidStream, Hang, ScriptedProvider, SlowThinker, error, reply
 
 
 class ListRecorder:
@@ -215,6 +215,19 @@ async def test_stream_failure_after_tokens_is_not_retried() -> None:
     with pytest.raises(StreamInterruptedError):
         await consume()
     assert received == ["Начало"]
+
+
+async def test_reasoning_keepalives_reset_the_idle_timeout() -> None:
+    thinker = SlowThinker(reply("ответ после раздумий"), beats=6, interval=0.03)
+    groq = ScriptedProvider("groq", [thinker])
+    router, _, _ = make_router(groq, timeout_s=0.1, max_retries=0, fallback=[])
+
+    events = [e async for e in router.stream(ask(), tier=Tier.COMPLEX)]  # 0.18s > timeout
+
+    assert all(isinstance(e, TextDelta | StreamDone) for e in events)  # keep-alives filtered
+    assert "".join(e.text for e in events if isinstance(e, TextDelta)).strip() == (
+        "ответ после раздумий"
+    )
 
 
 # ---- structured output --------------------------------------------------------------------

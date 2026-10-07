@@ -18,6 +18,7 @@ from brand_api.llm.errors import LLMError
 from brand_api.llm.types import (
     ChatRequest,
     ChatResponse,
+    KeepAlive,
     Message,
     NativeContent,
     StreamDone,
@@ -78,6 +79,8 @@ class AnthropicProvider:
                 async for event in stream:
                     if event.type == "text" and event.text:
                         yield TextDelta(event.text)
+                    else:  # thinking / tool input deltas: keep the idle timer alive
+                        yield KeepAlive()
                 final = await stream.get_final_message()
         except anthropic.AnthropicError as exc:
             raise _map_error(exc) from exc

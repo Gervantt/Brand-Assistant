@@ -5,7 +5,15 @@ from collections.abc import AsyncGenerator
 from dataclasses import dataclass, field
 
 from brand_api.llm.errors import LLMError
-from brand_api.llm.types import ChatRequest, ChatResponse, StreamDone, StreamEvent, TextDelta, Usage
+from brand_api.llm.types import (
+    ChatRequest,
+    ChatResponse,
+    KeepAlive,
+    StreamDone,
+    StreamEvent,
+    TextDelta,
+    Usage,
+)
 
 
 @dataclass
@@ -21,7 +29,16 @@ class Hang:
     """Never answer — exercises the router's timeout."""
 
 
-ScriptItem = ChatResponse | LLMError | FailMidStream | Hang
+@dataclass
+class SlowThinker:
+    """Reasoning model: `beats` keep-alive chunks `interval` apart, then the answer."""
+
+    response: ChatResponse
+    beats: int
+    interval: float
+
+
+ScriptItem = ChatResponse | LLMError | FailMidStream | Hang | SlowThinker
 
 
 def reply(content: str = "ok", *, tokens_in: int = 10, tokens_out: int = 5) -> ChatResponse:
@@ -68,6 +85,11 @@ class ScriptedProvider:
         if isinstance(item, FailMidStream):
             yield TextDelta(item.text)
             raise item.error
+        if isinstance(item, SlowThinker):
+            for _ in range(item.beats):
+                await asyncio.sleep(item.interval)
+                yield KeepAlive()
+            item = item.response
         assert isinstance(item, ChatResponse)
         for word in item.content.split(" "):
             yield TextDelta(word + " ")

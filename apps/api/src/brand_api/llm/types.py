@@ -103,7 +103,14 @@ class StreamDone:
     response: ChatResponse
 
 
-StreamEvent = TextDelta | StreamDone
+@dataclass(frozen=True, slots=True)
+class KeepAlive:
+    """Provider activity without user-visible text (e.g. reasoning tokens). Resets the router's
+    idle timeout; never forwarded to callers."""
+
+
+StreamEvent = TextDelta | StreamDone | KeepAlive
+RouterStreamEvent = TextDelta | StreamDone
 
 
 def estimate_tokens(text: str) -> int:

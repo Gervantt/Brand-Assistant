@@ -11,6 +11,7 @@ from brand_api.llm.errors import LLMError
 from brand_api.llm.openai_compat import OpenAICompatOptions, OpenAICompatProvider
 from brand_api.llm.types import (
     ChatRequest,
+    KeepAlive,
     Message,
     StreamDone,
     TextDelta,
@@ -210,6 +211,7 @@ async def test_stream_yields_text_and_assembles_tool_calls() -> None:
     events = [e async for e in provider(handler).stream("m", ChatRequest(messages=[]))]
 
     assert [e.text for e in events if isinstance(e, TextDelta)] == ["Ищу ", "в брендбуке"]
+    assert sum(isinstance(e, KeepAlive) for e in events) == 4  # tool deltas, finish, usage
     done = events[-1]
     assert isinstance(done, StreamDone)
     assert done.response.content == "Ищу в брендбуке"

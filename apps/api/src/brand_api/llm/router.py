@@ -30,8 +30,8 @@ from brand_api.llm.types import (
     ChatResponse,
     Message,
     ModelRef,
+    RouterStreamEvent,
     StreamDone,
-    StreamEvent,
     TextDelta,
     Tier,
 )
@@ -138,7 +138,7 @@ class LLMRouter:
 
     async def stream(
         self, request: ChatRequest, *, tier: Tier, ctx: CallContext | None = None
-    ) -> AsyncGenerator[StreamEvent, None]:
+    ) -> AsyncGenerator[RouterStreamEvent, None]:
         """Fallback/retry is possible only until the first token is emitted."""
         ctx = ctx or CallContext()
         request = self._with_defaults(request)
@@ -151,52 +151,57 @@ class LLMRouter:
                 outcome = _Outcome(
                     ref, tier, attempt, index > 0, time.perf_counter(), streamed=True
                 )
-                final: ChatResponse | None = None
-                emitted = False
-                events = provider.stream(ref.model, request)
                 try:
-                    while True:
-                        try:
-                            async with asyncio.timeout(self.settings.timeout_s):  # idle timeout
-                                event = await anext(events)
-                        except StopAsyncIteration:
-                            break
-                        if isinstance(event, TextDelta):
-                            if outcome.ttft_ms is None:
-                                outcome.ttft_ms = _elapsed_ms(outcome.started)
-                            emitted = True
-                            yield event
-                        else:
-                            final = event.response
-                    if final is None:
-                        raise LLMError(
-                            "stream ended without a result", kind="empty", retryable=True
-                        )
+                    async for event in self._attempt_stream(provider, ref.model, request, outcome):
+                        if isinstance(event, StreamDone):
+                            await self._record_ok(outcome, event.response, ctx)
+                            yield StreamDone(
+                                event.response.model_copy(
+                                    update={
+                                        "provider": ref.provider,
+                                        "model": ref.model,
+                                        "is_fallback": index > 0,
+                                    }
+                                )
+                            )
+                            return
+                        yield event
                 except (LLMError, TimeoutError) as exc:
                     error = _as_llm_error(exc)
                     await self._record_error(outcome, error, ctx)
-                    if emitted:
+                    if outcome.ttft_ms is not None:  # tokens already reached the user
                         raise StreamInterruptedError(str(error)) from exc
                     delay = self._retry_delay(attempt, error)
                     if delay is None:
                         failures.append(FailedAttempt(str(ref), error.kind, str(error)))
                         break
                     await self._sleep(delay)
-                    continue
-                finally:
-                    await events.aclose()
-                await self._record_ok(outcome, final, ctx)
-                yield StreamDone(
-                    final.model_copy(
-                        update={
-                            "provider": ref.provider,
-                            "model": ref.model,
-                            "is_fallback": index > 0,
-                        }
-                    )
-                )
-                return
         raise AllModelsFailedError(failures)
+
+    async def _attempt_stream(
+        self, provider: LLMProvider, model: str, request: ChatRequest, outcome: _Outcome
+    ) -> AsyncGenerator[RouterStreamEvent, None]:
+        """One provider stream with an idle timeout; keep-alives reset the timer silently."""
+        events = provider.stream(model, request)
+        final: ChatResponse | None = None
+        try:
+            while True:
+                try:
+                    async with asyncio.timeout(self.settings.timeout_s):
+                        event = await anext(events)
+                except StopAsyncIteration:
+                    break
+                if isinstance(event, TextDelta):
+                    if outcome.ttft_ms is None:
+                        outcome.ttft_ms = _elapsed_ms(outcome.started)
+                    yield event
+                elif isinstance(event, StreamDone):
+                    final = event.response
+        finally:
+            await events.aclose()
+        if final is None:
+            raise LLMError("stream ended without a result", kind="empty", retryable=True)
+        yield StreamDone(final)
 
     async def structured[M: BaseModel](
         self,
