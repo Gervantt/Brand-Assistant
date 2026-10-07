@@ -35,6 +35,21 @@ services:
       timeout: 3s
       retries: 20
 
+  # One-shot: migrations + seed before api and mcp start (both are idempotent).
+  migrate:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    entrypoint: ["sh", "-c", "alembic -c /app/apps/api/alembic.ini upgrade head && python -m brand_api.seed"]
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      <<: *api-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   api:
     build:
       context: .
@@ -54,6 +69,8 @@ services:
         condition: service_healthy
       mcp:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)"]
       interval: 10s
@@ -70,11 +87,14 @@ services:
         required: false
     environment:
       <<: *api-env
+      RERANKER_ENABLED: ${RERANKER_ENABLED:-true}  # local profile: cross-encoder on
+    volumes:
+      - models:/models  # embedding + reranker models survive rebuilds (~1.3 GB on first start)
     depends_on:
-      postgres:
-        condition: service_healthy
       redis:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health', timeout=3)"]
       interval: 10s
@@ -94,4 +114,5 @@ services:
 
 volumes:
   pgdata:
+  models:
   ollama:

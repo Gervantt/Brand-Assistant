@@ -71,3 +71,4 @@ asyncio_default_fixture_loop_scope = "session"
 asyncio_default_test_loop_scope = "session"
 testpaths = ["apps/api/tests", "apps/mcp_server/tests"]
 addopts = "-ra"
+filterwarnings = ["ignore:SOCKS support in urllib3:Warning"]

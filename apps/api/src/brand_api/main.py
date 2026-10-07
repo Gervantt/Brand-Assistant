@@ -15,7 +15,7 @@ from brand_api.llm.types import Tier
 from brand_api.logging_setup import configure_logging, get_logger
 from brand_api.middleware import RequestContextMiddleware
 from brand_api.observability.llm_calls import DbCallRecorder
-from brand_api.routes import admin, auth, clients, conversations, health, plans
+from brand_api.routes import admin, auth, clients, conversations, documents, health, plans
 
 log = get_logger(__name__)
 
@@ -75,6 +75,7 @@ def create_app(
     app.include_router(clients.router)
     app.include_router(conversations.router)
     app.include_router(plans.router)
+    app.include_router(documents.router)
     app.include_router(admin.router)
     return app
 

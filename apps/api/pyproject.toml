@@ -19,6 +19,7 @@ dependencies = [
     "pydantic[email]>=2.13.5",
     "sse-starlette>=2.1",
     "mcp>=2.3",
+    "python-multipart>=0.0.12",
 ]
 
 [tool.uv.sources]

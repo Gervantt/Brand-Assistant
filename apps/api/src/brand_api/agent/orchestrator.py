@@ -9,17 +9,19 @@ import asyncio
 import time
 import uuid
 from collections.abc import AsyncIterator
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import date
 from typing import Any
 
 import httpx2
 from mcp.shared.exceptions import MCPError as McpError
 
+from brand_api.agent.confidence import Confidence, ConfidenceFilter, combine, strip_confidence
 from brand_api.agent.events import (
     AgentEvent,
     ArtifactEvent,
     CitationsEvent,
+    ConfidenceEvent,
     DoneEvent,
     ErrorEvent,
     MetaEvent,
@@ -41,7 +43,15 @@ from brand_api.auth.principal import Principal
 from brand_api.config import AgentSettings
 from brand_api.llm.errors import AllModelsFailedError, StreamInterruptedError
 from brand_api.llm.router import CallContext, LLMRouter
-from brand_api.llm.types import ChatRequest, ChatResponse, Message, TextDelta, ToolCall, ToolSpec
+from brand_api.llm.types import (
+    ChatRequest,
+    ChatResponse,
+    Message,
+    TextDelta,
+    Tier,
+    ToolCall,
+    ToolSpec,
+)
 from brand_shared.logging_setup import get_logger
 from brand_shared.permissions import Tool
 
@@ -57,6 +67,7 @@ class RunState:
     artifacts: list[dict[str, Any]] = field(default_factory=list)
     steps: int = 0
     error: str | None = None
+    retrieval_scores: list[float] = field(default_factory=list)
 
     def add(self, message: Message, **extra: Any) -> None:
         if extra:
@@ -73,6 +84,23 @@ class RunInput:
     history: list[Message]
     user_text: str
     trace_id: str
+
+
+class _Turn:
+    """Holder for the final response of one streamed model call."""
+
+    def __init__(self) -> None:
+        self._response: ChatResponse | None = None
+
+    @property
+    def response(self) -> ChatResponse:
+        if self._response is None:  # router contract: a stream always ends with StreamDone
+            raise RuntimeError("LLM stream ended without a final response")
+        return self._response
+
+    @response.setter
+    def response(self, value: ChatResponse) -> None:
+        self._response = value
 
 
 class Agent:
@@ -99,54 +127,101 @@ class Agent:
         try:
             async with self.mcp.session(run.principal, trace_id=run.trace_id) as mcp:
                 specs = model_tool_specs(await mcp.list_tools(), run.principal)
-                for step in range(1, self.settings.max_steps + 1):
-                    state.steps = step
-                    yield StatusEvent("Думаю…" if step == 1 else "Анализирую результат…")
-                    response: ChatResponse | None = None
-                    async for event in self.router.stream(
-                        ChatRequest(messages=messages, tools=specs), tier=tier, ctx=ctx
-                    ):
-                        if isinstance(event, TextDelta):
-                            yield TokenEvent(event.text)
-                        else:
-                            response = event.response
-                    if response is None:  # router contract: a stream always ends with StreamDone
-                        raise RuntimeError("LLM stream ended without a final response")
-                    assistant = response.as_message()
-                    messages.append(assistant)
-                    if not response.tool_calls:
-                        state.add(assistant)
-                        yield DoneEvent(steps=step)
-                        return
-                    state.add(assistant)
-                    for call in response.tool_calls:
-                        async for tool_event in self._execute(
-                            call, run=run, specs=specs, mcp=mcp, messages=messages, state=state
-                        ):
-                            yield tool_event
-                state.error = "max_steps"
-                yield ErrorEvent(
-                    "Не удалось завершить задачу за отведённое число шагов. "
-                    "Попробуйте упростить запрос.",
-                    code="max_steps",
-                )
+                async for event in self._loop(
+                    run, state=state, messages=messages, specs=specs, mcp=mcp, tier=tier, ctx=ctx
+                ):
+                    yield event
         except Exception as exc:  # the MCP client's task group wraps errors in ExceptionGroups
-            root = root_cause(exc)
-            state.error = type(root).__name__
-            if isinstance(root, AllModelsFailedError | StreamInterruptedError):
-                log.warning("agent_llm_failed", error=str(root), trace_id=run.trace_id)
-                yield ErrorEvent(root.user_message, code="llm_unavailable")
-            elif isinstance(root, OSError | httpx2.HTTPError | McpError):
-                log.error("agent_mcp_failed", error=repr(root), trace_id=run.trace_id)
-                yield ErrorEvent(
-                    "Сервис инструментов временно недоступен. Попробуйте позже.",
-                    code="tools_unavailable",
-                )
+            yield self._failure(exc, run, state)
+
+    async def _loop(
+        self,
+        run: RunInput,
+        *,
+        state: RunState,
+        messages: list[Message],
+        specs: list[ToolSpec],
+        mcp: McpSession,
+        tier: Tier,
+        ctx: CallContext,
+    ) -> AsyncIterator[AgentEvent]:
+        for step in range(1, self.settings.max_steps + 1):
+            state.steps = step
+            yield StatusEvent("Думаю…" if step == 1 else "Анализирую результат…")
+            turn = _Turn()
+            async for token in self._model_turn(messages, specs, tier, ctx, turn):
+                yield token
+            content, self_assessed = strip_confidence(turn.response.content)
+            assistant = turn.response.model_copy(update={"content": content}).as_message()
+            messages.append(assistant)
+            if not turn.response.tool_calls:
+                confidence = self._confidence(state, self_assessed)
+                meta: dict[str, Any] = {}
+                if confidence is not None:
+                    meta["confidence"] = asdict(confidence)
+                    yield ConfidenceEvent(**asdict(confidence))
+                state.add(assistant, meta=meta)
+                yield DoneEvent(steps=step)
+                return
+            state.add(assistant)
+            for call in turn.response.tool_calls:
+                async for tool_event in self._execute(
+                    call, run=run, specs=specs, mcp=mcp, messages=messages, state=state
+                ):
+                    yield tool_event
+        state.error = "max_steps"
+        yield ErrorEvent(
+            "Не удалось завершить задачу за отведённое число шагов. Попробуйте упростить запрос.",
+            code="max_steps",
+        )
+
+    async def _model_turn(
+        self,
+        messages: list[Message],
+        specs: list[ToolSpec],
+        tier: Tier,
+        ctx: CallContext,
+        turn: "_Turn",
+    ) -> AsyncIterator[AgentEvent]:
+        """Stream one model call to the user, hiding the confidence marker."""
+        marker = ConfidenceFilter()
+        async for event in self.router.stream(
+            ChatRequest(messages=messages, tools=specs), tier=tier, ctx=ctx
+        ):
+            if isinstance(event, TextDelta):
+                if visible := marker.feed(event.text):
+                    yield TokenEvent(visible)
             else:
-                log.exception("agent_failed", trace_id=run.trace_id)
-                yield ErrorEvent(
-                    "Внутренняя ошибка ассистента. Мы уже разбираемся.", code="internal"
-                )
+                turn.response = event.response
+        if tail := marker.flush():
+            yield TokenEvent(tail)
+
+    @staticmethod
+    def _failure(exc: Exception, run: RunInput, state: RunState) -> ErrorEvent:
+        root = root_cause(exc)
+        state.error = type(root).__name__
+        if isinstance(root, AllModelsFailedError | StreamInterruptedError):
+            log.warning("agent_llm_failed", error=str(root), trace_id=run.trace_id)
+            return ErrorEvent(root.user_message, code="llm_unavailable")
+        if isinstance(root, OSError | httpx2.HTTPError | McpError):
+            log.error("agent_mcp_failed", error=repr(root), trace_id=run.trace_id)
+            return ErrorEvent(
+                "Сервис инструментов временно недоступен. Попробуйте позже.",
+                code="tools_unavailable",
+            )
+        log.error("agent_failed", error=repr(root), trace_id=run.trace_id, exc_info=root)
+        return ErrorEvent("Внутренняя ошибка ассистента. Попробуйте ещё раз.", code="internal")
+
+    def _confidence(self, state: RunState, self_assessed: float | None) -> Confidence | None:
+        """Only brand-book answers get a confidence score (searches happened in this run)."""
+        if not state.retrieval_scores:
+            return None
+        return combine(
+            max(state.retrieval_scores),
+            self_assessed,
+            weight=self.settings.confidence_weight,
+            threshold=self.settings.confidence_threshold,
+        )
 
     async def _execute(
         self,
@@ -215,10 +290,12 @@ class Agent:
             state.artifacts.append(artifact)
             yield ArtifactEvent(kind=artifact["kind"], data=data)
         if call.name == Tool.SEARCH_BRANDBOOK:
+            found = bool(data.get("found", False))
+            state.retrieval_scores.append(float(data.get("confidence", 0.0)))
             yield CitationsEvent(
-                items=data.get("hits", []),
+                items=data.get("hits", []) if found else [],
                 confidence=float(data.get("confidence", 0.0)),
-                found=bool(data.get("found", False)),
+                found=found,
             )
         respond(
             for_model(call.name, data, max_chars=self.settings.max_tool_result_chars),

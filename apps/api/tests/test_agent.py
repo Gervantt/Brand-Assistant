@@ -50,35 +50,67 @@ async def test_brandbook_question_flow(settings: Settings) -> None:
     llm = ScriptedProvider(
         "groq",
         [
-            tool_reply(("search_brandbook", {"query": "тон голоса"})),
-            reply("В брендбуке нет информации о тоне голоса."),
+            tool_reply(("search_brandbook", {"query": "фирменные цвета"})),
+            reply("Основной цвет — обжаренный кофе #4B2E2A [1]. <confidence>0.9</confidence>"),
         ],
     )
     async with api_with_llm(settings, llm) as client:
         headers = await demo_headers(client, Role.VIEWER)
         conversation_id = await new_conversation(client, headers)
-        events = await chat(client, headers, conversation_id, "Какой у бренда тон голоса?")
+        events = await chat(client, headers, conversation_id, "Какие у бренда фирменные цвета?")
 
         assert names(events)[0] == "meta"
         assert events[0][1]["tier"] == "simple"
-        assert (
-            "tool_start",
-            {"id": "call_0", "name": "search_brandbook", "label": "Ищу в брендбуке…"},
-        ) in events
+        start = next(data for name, data in events if name == "tool_start")
+        assert start["label"] == "Ищу в брендбуке…"
         citations = next(data for name, data in events if name == "citations")
-        assert citations["found"] is False
+        assert citations["found"] is True
+        assert any("#4B2E2A" in item["text"] for item in citations["items"])
         assert names(events)[-1] == "done"
-        assert "нет информации" in text_of(events)
 
-        # The model saw only the viewer's tools, without the gateway-controlled client_id.
+        answer = text_of(events)
+        assert "#4B2E2A [1]." in answer
+        assert "confidence" not in answer  # the self-assessment marker never reaches the user
+        confidence = next(data for name, data in events if name == "confidence")
+        assert confidence["self_assessed"] == 0.9
+        assert 0 < confidence["retrieval"] <= 1
+        assert confidence["low"] is False
+
+        # The model saw only the viewer's tools, without the gateway-controlled client_id,
+        # and got numbered fragments to cite.
         first_request = llm.requests[0][1]
         assert {t.name for t in first_request.tools} == {"search_brandbook", "get_client_profile"}
         assert all("client_id" not in t.parameters["properties"] for t in first_request.tools)
         assert "Bean There" in first_request.messages[0].content
+        tool_message = llm.requests[1][1].messages[-1]
+        assert '"n": 1' in tool_message.content
 
         detail = (await client.get(f"/conversations/{conversation_id}", headers=headers)).json()
         assert [m["role"] for m in detail["messages"]] == ["user", "assistant"]
-        assert detail["title"] == "Какой у бренда тон голоса?"
+        assert "confidence" not in detail["messages"][1]["content"]
+        assert detail["title"] == "Какие у бренда фирменные цвета?"
+
+
+async def test_off_topic_question_is_answered_as_not_in_brandbook(settings: Settings) -> None:
+    llm = ScriptedProvider(
+        "groq",
+        [
+            tool_reply(("search_brandbook", {"query": "столица Франции"})),
+            reply("В брендбуке этого нет. Уточните, пожалуйста, вопрос о бренде."),
+        ],
+    )
+    async with api_with_llm(settings, llm) as client:
+        headers = await demo_headers(client, Role.VIEWER)
+        conversation_id = await new_conversation(client, headers)
+        events = await chat(client, headers, conversation_id, "Какая столица Франции?")
+
+    citations = next(data for name, data in events if name == "citations")
+    assert citations == {"items": [], "confidence": citations["confidence"], "found": False}
+    tool_message = llm.requests[1][1].messages[-1]
+    assert '"found": false' in tool_message.content
+    assert "fragments" not in tool_message.content  # nothing weak to improvise from
+    confidence = next(data for name, data in events if name == "confidence")
+    assert confidence["low"] is True
 
 
 async def test_content_plan_generation_streams_an_artifact(settings: Settings) -> None:

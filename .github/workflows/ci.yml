@@ -39,6 +39,11 @@ jobs:
           enable-cache: true
       - name: Install
         run: uv sync --all-packages --frozen
+      - name: Cache embedding model
+        uses: actions/cache@v4
+        with:
+          path: .cache/fastembed
+          key: fastembed-paraphrase-multilingual-MiniLM-L12-v2
       - name: Ruff lint
         run: uv run ruff check .
       - name: Ruff format

@@ -60,7 +60,30 @@ def for_model(tool_name: str, data: dict[str, Any] | None, *, max_chars: int) ->
     if data is None:
         return "{}"
     view: Any = data
-    if tool_name == Tool.CREATE_CONTENT_PLAN:
+    if tool_name == Tool.SEARCH_BRANDBOOK:
+        if not data.get("found"):
+            # No weak fragments to improvise from: the model must say it isn't in the brand book.
+            view = {
+                "found": False,
+                "instruction": (
+                    "В брендбуке нет ответа на этот вопрос. Скажи пользователю, что в брендбуке "
+                    "этого нет, и задай уточняющий вопрос. Не отвечай по общим знаниям."
+                ),
+            }
+        else:
+            view = {
+                "found": True,
+                "fragments": [
+                    {
+                        "n": i,
+                        "source": f"{h.get('document')} / {h.get('section')}",
+                        "text": h.get("text"),
+                    }
+                    for i, h in enumerate(data.get("hits", []), start=1)
+                ],
+                "note": "Ссылайся на фрагменты как [n].",
+            }
+    elif tool_name == Tool.CREATE_CONTENT_PLAN:
         plan = data.get("plan", {})
         view = {
             "draft_id": data.get("draft_id"),

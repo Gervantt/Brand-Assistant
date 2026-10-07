@@ -51,6 +51,9 @@ class AgentSettings(BaseModel):
     history_limit: int = Field(default=30, ge=2)
     max_tool_result_chars: int = Field(default=6000, ge=500)
     lock_ttl_s: int = Field(default=300, gt=0)
+    # Answer confidence = w * retrieval + (1 - w) * model self-assessment.
+    confidence_weight: float = Field(default=0.6, ge=0, le=1)
+    confidence_threshold: float = Field(default=0.5, ge=0, le=1)
 
 
 class Settings(BaseSettings):
@@ -91,6 +94,7 @@ class Settings(BaseSettings):
     # MCP tool server and agent loop.
     mcp_url: str = "http://localhost:8001/mcp"
     mcp_internal_secret: SecretStr = SecretStr(DEV_MCP_SECRET)
+    max_upload_bytes: int = Field(default=10 * 1024 * 1024, gt=0)
     agent: AgentSettings = Field(default_factory=AgentSettings)
 
     @field_validator("cors_origins", mode="before")

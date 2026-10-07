@@ -22,6 +22,8 @@ from brand_api.db import create_engine, create_sessionmaker, normalize_database_
 from brand_api.main import create_app
 from brand_api.seed import run_seed
 from brand_mcp.config import McpSettings
+from brand_mcp.deps import Deps
+from brand_mcp.rag.seed import seed_documents
 from brand_mcp.server import create_app as create_mcp_app
 from brand_shared.permissions import Role
 
@@ -32,6 +34,7 @@ TEST_REDIS_URL = os.environ.get("TEST_REDIS_URL", "redis://localhost:6379/15")
 DEMO_PASSWORD = "demo-password-for-tests"
 MCP_SECRET = "api-test-mcp-secret-" + "x" * 24
 ALEMBIC_INI = Path(__file__).resolve().parents[1] / "alembic.ini"
+REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 async def _ensure_database(url: str) -> None:
@@ -73,6 +76,8 @@ async def mcp_url(base_settings: Settings, seeded: None) -> AsyncIterator[str]:
         redis_url=TEST_REDIS_URL,
         mcp_internal_secret=MCP_SECRET,
         log_level="WARNING",
+        model_cache_dir=str(REPO_ROOT / ".cache" / "fastembed"),
+        seed_documents_dir=str(REPO_ROOT / "data" / "brands"),
     )
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
@@ -85,6 +90,10 @@ async def mcp_url(base_settings: Settings, seeded: None) -> AsyncIterator[str]:
     task = asyncio.create_task(server.serve())
     while not server.started:  # noqa: ASYNC110 - uvicorn exposes only a bool flag
         await asyncio.sleep(0.02)
+    # Clients exist (seeded), so the server's background ingestion finishes in one pass.
+    deps = Deps.create(mcp_settings)
+    await seed_documents(deps, REPO_ROOT / "data" / "brands", attempts=1)
+    await deps.aclose()
     yield f"http://127.0.0.1:{port}/mcp"
     server.should_exit = True
     await task

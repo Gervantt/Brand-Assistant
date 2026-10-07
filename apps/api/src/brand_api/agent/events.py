@@ -67,6 +67,15 @@ class CitationsEvent(AgentEvent):
 
 
 @dataclass(frozen=True)
+class ConfidenceEvent(AgentEvent):
+    event: str = field(init=False, default="confidence")
+    retrieval: float
+    self_assessed: float | None
+    combined: float
+    low: bool
+
+
+@dataclass(frozen=True)
 class ErrorEvent(AgentEvent):
     event: str = field(init=False, default="error")
     message: str

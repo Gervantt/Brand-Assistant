@@ -158,3 +158,44 @@ message gets 409) and a small state record (`GET /conversations/{id}/state`). Th
 persisted in a cancellation-shielded `finally`, so a client disconnect mid-stream loses nothing.
 Large artifacts go to the UI in full but reach the model as compact summaries (saves tokens on
 Groq's 8K TPM free tier).
+
+## 019. RAG: models, chunking, thresholds
+**Embeddings.** fastembed `paraphrase-multilingual-MiniLM-L12-v2` (384-d, ~220 MB, ONNX, no
+torch, no API key) — `bge-small` from the original spec is English-only and the content is
+Russian. `EMBEDDING_PROVIDER=gemini` switches to `gemini-embedding-001` truncated to 384-d
+(Matryoshka) and re-normalised, so both share the `vector(384)` column.
+**Chunking.** Heading-aware: chunks never cross a section; the section path
+(«Тон голоса > Эмодзи») is stored and embedded with the text; long sections are packed by
+paragraph/sentence to ~1200 chars with a sentence-aligned ~200-char overlap.
+**Thresholds.** Measured on the demo brand book: on-topic questions score 0.45–0.70 cosine,
+off-topic 0.17–0.31 (one outlier: «Рецепт борща» 0.46 against a coffee brand book). Default
+`MIN_SIMILARITY=0.40`; with the reranker `MIN_RERANK_SCORE=0.30` (reranker probabilities separate
+much better: «борщ» → 0.16).
+
+## 020. Hybrid search = pgvector + IDF-weighted lexical match, fused with RRF
+Postgres `ts_rank_cd` is *not* BM25: it has no IDF, so «бренд» outweighed «слоган» in tests.
+The lexical side therefore scores chunks BM25-style with binary term frequency (sum of IDF of
+matched lexemes, per client), drops question-word stems and lexemes present in >50% of a
+client's chunks, and ORs the rest (AND semantics kill natural questions). Candidates from both
+sides (20 each) are fused with Reciprocal Rank Fusion (k=60). HNSW search runs with
+`hnsw.iterative_scan = relaxed_order` so the per-client filter doesn't starve recall.
+**Known limitation (measured).** Without the reranker, a chunk that only the lexical side finds
+(«слоган» → «Позиционирование») can lose to chunks found by both sides. The cross-encoder
+(`jina-reranker-v2-base-multilingual`) fixes these cases; it is on locally and off in prod
+(1.1 GB doesn't fit Render's 512 MB). Evals quantify the difference.
+
+## 021. Confidence: retrieval gate + model self-assessment
+1. **Hard gate.** `search_brandbook` returns `found=false` when the best score is under the
+   threshold; the gateway then gives the model *no fragments*, only the instruction to say
+   «в брендбуке этого нет» and ask a clarifying question.
+2. **Soft signal.** The model ends brand-book answers with `<confidence>x</confidence>`; a
+   streaming filter removes the marker (even when split across tokens) before the user sees
+   anything. `combined = 0.6·retrieval + 0.4·self`; below 0.5 the UI shows a "low confidence"
+   badge (SSE `confidence` event, stored in the message meta).
+
+## 022. Ingestion lives in the MCP server
+Only the MCP process loads the embedding model. Uploads go `POST /clients/{id}/documents` →
+internal MCP tool `ingest_document` (never offered to the model, RBAC `upload_documents`,
+16 MB transport limit for a 10 MB file in base64). Documents are deduplicated per client by
+SHA-256. The demo brand books in `data/brands/<slug>/` are ingested by the MCP server at
+startup in the background (it waits for the API's seed to create the clients).
