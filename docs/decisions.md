@@ -84,3 +84,28 @@ validation error fed back, then `StructuredOutputError`.
 (from the `llm.pricing` table, USD per 1M tokens), latency, TTFT, attempt number and
 `is_fallback`. This makes error rate and fallback rate direct SQL aggregates. When a provider
 omits usage in a stream, tokens are estimated and flagged `tokens_estimated`.
+
+## 011. Auth: stateless JWT, but permissions read from the DB on every request
+**Context.** Simple login without an external IdP; revoking a role or a client must work now,
+not when the token expires.
+**Decision.** HS256 access tokens (PyJWT) carry only `sub`, `type` and `exp`. Each request
+loads the user (role, `is_active`, client assignments) from Postgres. Passwords use `bcrypt`
+directly (passlib is unmaintained); inputs over bcrypt's 72-byte limit are rejected at the API
+instead of being silently truncated. Unknown emails cost the same bcrypt time as wrong passwords
+(no account enumeration by timing); both return the same message. Production refuses to start
+with the dev `JWT_SECRET` or one shorter than 32 characters.
+
+## 012. RBAC + ABAC model
+**Decision.** `brand_shared.permissions` is the single source of truth, shared by the gateway
+and the MCP server. Roles are cumulative (viewer ⊂ copywriter ⊂ manager ⊂ admin) over a small
+set of *actions*; every MCP tool maps to exactly one action, and unknown tool names are denied.
+ABAC is the user's client assignment list (`user_clients`); admins implicitly access every
+client. An inaccessible client returns 404, same as a non-existent one, so client ids can't be
+probed. Self-registration creates a viewer with no clients (useless until an admin assigns
+some), and can be switched off with `ALLOW_REGISTRATION=false`.
+
+## 013. Demo accounts for a public demo
+**Decision.** Seed creates one `is_demo` account per role and re-syncs role, clients and
+`DEMO_PASSWORD` on every start, so vandalism through the public demo heals on restart. The
+login page uses `POST /auth/demo-login {role}` — the frontend never sees the demo password.
+Demo accounts can't be edited through the admin API. `DEMO_MODE=false` turns all of this off.
