@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 
 from brand_api.config import Settings
 from brand_api.llm.config import LLMSettings, TierModels
+from brand_api.llm.errors import AllModelsFailedError
 from brand_api.llm.pricing import cost_usd
 from brand_api.llm.registry import build_providers
 from brand_api.llm.router import LLMRouter
@@ -76,6 +77,22 @@ def single_model_router(settings: Settings, ref: ModelRef) -> LLMRouter:
     return LLMRouter(llm, build_providers(settings), NullRecorder())
 
 
+class ModelUnavailableError(RuntimeError):
+    pass
+
+
+async def preflight(router: LLMRouter, model: str) -> None:
+    """One tiny call per model before spending 90 calls on a model we can't use."""
+    try:
+        await router.chat(
+            ChatRequest(messages=[Message(role="user", content="ok")], max_tokens=64),
+            tier=Tier.SIMPLE,
+        )
+    except AllModelsFailedError as exc:
+        reasons = "; ".join(f"{a.kind}: {a.message[:160]}" for a in exc.attempts)
+        raise ModelUnavailableError(f"{model} is not usable: {reasons}") from exc
+
+
 def fragments_prompt(question: str, hits: list[str]) -> str:
     if not hits:
         return f"Фрагментов не найдено.\n\nВопрос: {question}"
@@ -99,6 +116,9 @@ async def run(
 
     judge_ref = ModelRef.parse(judge)
     judge_router = single_model_router(settings, judge_ref)
+    await preflight(judge_router, judge)
+    for model in models:
+        await preflight(single_model_router(settings, ModelRef.parse(model)), model)
     reports = []
     for model in models:
         ref = ModelRef.parse(model)

@@ -75,7 +75,10 @@ async def main() -> None:
         rows = await retrieval_eval.run(cases, clients)
         columns = RETRIEVAL_COLUMNS
     else:
-        rows = await generation_eval.run(cases, clients, args.models.split(","), args.judge)
+        try:
+            rows = await generation_eval.run(cases, clients, args.models.split(","), args.judge)
+        except generation_eval.ModelUnavailableError as exc:
+            raise SystemExit(f"\nAborted, nothing written: {exc}") from None
         columns = GENERATION_COLUMNS
     (RESULTS / f"{args.suite}.json").write_text(
         json.dumps({"date": stamp, "cases": len(cases), "rows": rows}, ensure_ascii=False, indent=2)
