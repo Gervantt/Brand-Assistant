@@ -6,7 +6,9 @@ import socket
 from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
 
-os.environ["APP_ENV"] = "test"  # must be set before brand_api modules read settings
+# Must be set before brand_api modules read settings; BRAND_ENV_FILE="" ignores the developer's .env.
+os.environ["APP_ENV"] = "test"
+os.environ["BRAND_ENV_FILE"] = ""
 
 import asyncpg
 import httpx

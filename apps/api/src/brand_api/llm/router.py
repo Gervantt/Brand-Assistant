@@ -11,12 +11,16 @@ from contextlib import AbstractContextManager
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from decimal import Decimal
+from typing import TYPE_CHECKING
 
 import structlog
 from pydantic import BaseModel, ValidationError
 
 from brand_api.llm.base import LLMProvider
 from brand_api.llm.cache import ResponseCache
+
+if TYPE_CHECKING:
+    from brand_api.limits.budget import TokenBudget
 from brand_api.llm.complexity import CLASSIFIER_PROMPT, classify_heuristic, parse_classifier_answer
 from brand_api.llm.config import LLMSettings
 from brand_api.llm.errors import (
@@ -75,6 +79,7 @@ class LLMRouter:
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         tracer: Tracer = NULL_TRACER,
         cache: ResponseCache | None = None,
+        budget: "TokenBudget | None" = None,
     ) -> None:
         self.settings = settings
         self._providers = dict(providers)
@@ -82,6 +87,7 @@ class LLMRouter:
         self._sleep = sleep
         self._tracer = tracer
         self._cache = cache
+        self._budget = budget
 
     async def aclose(self) -> None:
         for provider in self._providers.values():
@@ -124,6 +130,8 @@ class LLMRouter:
         cache_key = self._cache_key(chain[0], tier, request)
         if (cached := await self._from_cache(cache_key, tier, request, ctx)) is not None:
             return cached
+        if self._budget is not None:
+            await self._budget.check()
         failures: list[FailedAttempt] = []
         for index, ref in enumerate(chain):
             provider = self._providers[ref.provider]
@@ -165,6 +173,8 @@ class LLMRouter:
                 yield TextDelta(cached.content)
             yield StreamDone(cached)
             return
+        if self._budget is not None:
+            await self._budget.check()
         failures: list[FailedAttempt] = []
         for index, ref in enumerate(chain):
             provider = self._providers[ref.provider]
@@ -374,6 +384,8 @@ class LLMRouter:
         self, o: _Outcome, response: ChatResponse, ctx: CallContext, observation: Observation
     ) -> None:
         latency = _elapsed_ms(o.started)
+        if self._budget is not None:
+            await self._budget.consume(response.usage.input_tokens + response.usage.output_tokens)
         observation.update(
             output=response.content or [tc.model_dump() for tc in response.tool_calls],
             usage_details={

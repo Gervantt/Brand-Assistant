@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 os.environ["APP_ENV"] = "test"
+os.environ["BRAND_ENV_FILE"] = ""  # ignore the developer's personal .env
 
 import httpx2
 import pytest
@@ -83,8 +84,7 @@ async def prepare_database() -> None:
     await engine.dispose()
 
 
-@pytest.fixture(scope="session")
-def mcp_settings() -> McpSettings:
+def mcp_settings_for_tests() -> McpSettings:
     return McpSettings(
         database_url=TEST_DATABASE_URL,
         redis_url=TEST_REDIS_URL,
@@ -92,6 +92,11 @@ def mcp_settings() -> McpSettings:
         log_level="WARNING",
         model_cache_dir=MODEL_CACHE,
     )
+
+
+@pytest.fixture(scope="session")
+def mcp_settings() -> McpSettings:
+    return mcp_settings_for_tests()
 
 
 @pytest.fixture(scope="session")

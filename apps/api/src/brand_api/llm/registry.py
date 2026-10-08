@@ -3,6 +3,7 @@
 from collections.abc import Mapping
 
 from brand_api.config import Settings
+from brand_api.limits.budget import TokenBudget
 from brand_api.llm.anthropic_provider import AnthropicProvider
 from brand_api.llm.base import LLMProvider
 from brand_api.llm.cache import ResponseCache
@@ -51,6 +52,7 @@ def build_router(
     *,
     tracer: Tracer = NULL_TRACER,
     cache: ResponseCache | None = None,
+    budget: TokenBudget | None = None,
 ) -> LLMRouter:
     """`providers` overrides credential-based discovery (tests inject scripted providers)."""
     return LLMRouter(
@@ -59,4 +61,5 @@ def build_router(
         recorder,
         tracer=tracer,
         cache=cache if settings.llm.cache_enabled else None,
+        budget=budget,
     )

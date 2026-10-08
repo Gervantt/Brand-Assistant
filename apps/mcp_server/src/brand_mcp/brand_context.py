@@ -5,8 +5,11 @@ from mcp.server.mcpserver.exceptions import ToolError
 
 from brand_mcp.deps import Deps
 from brand_shared.db.models import Client
+from brand_shared.logging_setup import get_logger
 from brand_shared.schemas.clients import ClientProfile
 from brand_shared.schemas.tools import BrandbookHit
+
+log = get_logger("brand_mcp.brand_context")
 
 
 @dataclass(frozen=True)
@@ -44,7 +47,12 @@ async def load_brand_context(
         client = await session.get(Client, client_id)
         if client is None:
             raise ToolError("Клиент не найден")
-        hits = await deps.retriever.search(session, client_id, query, top_k)
+    try:
+        async with deps.sessionmaker() as session:
+            hits = await deps.retriever.search(session, client_id, query, top_k)
+    except Exception as exc:  # embeddings API down / quota: generate from the profile alone
+        log.warning("brand_context_retrieval_failed", client_id=str(client_id), error=repr(exc))
+        hits = []
     return BrandContext(
         name=client.name, profile=ClientProfile.model_validate(client.profile), hits=hits
     )

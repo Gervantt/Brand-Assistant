@@ -12,9 +12,12 @@ from brand_mcp.deps import Deps
 from brand_mcp.tool_log import tool_call
 from brand_mcp.tools.common import ClientId
 from brand_shared.db.models import Client
+from brand_shared.logging_setup import get_logger
 from brand_shared.permissions import Tool
 from brand_shared.schemas.clients import ClientProfile
 from brand_shared.schemas.tools import ClientProfileResult, SearchBrandbookResult
+
+log = get_logger("brand_mcp.tools")
 
 READ_ONLY = ToolAnnotations(read_only_hint=True, destructive_hint=False, idempotent_hint=True)
 
@@ -54,7 +57,14 @@ def register(server: MCPServer, deps: Deps) -> None:
         """Поиск по загруженному брендбуку клиента. Возвращает релевантные фрагменты с
         источниками и уверенность. Если found=false — в брендбуке ответа нет, не выдумывай."""
         async with tool_call(auth, query=query[:100]), deps.sessionmaker() as session:
-            hits = await deps.retriever.search(session, auth.client_id, query, top_k)
+            try:
+                hits = await deps.retriever.search(session, auth.client_id, query, top_k)
+            except Exception as exc:
+                log.warning("brandbook_search_failed", error=repr(exc))
+                raise ToolError(
+                    "Поиск по брендбуку временно недоступен. Сообщи пользователю и предложи "
+                    "повторить позже."
+                ) from exc
         confidence = max((h.score for h in hits), default=0.0)
         return SearchBrandbookResult(
             query=query,

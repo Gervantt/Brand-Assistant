@@ -1,0 +1,46 @@
+# Render Blueprint: https://render.com/docs/blueprint-spec
+# One free web service: API gateway + embedded MCP tool server (see deploy/Dockerfile).
+services:
+  - type: web
+    name: brand-assistant-api
+    runtime: docker
+    plan: free
+    region: frankfurt
+    dockerfilePath: ./deploy/Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: APP_ENV
+        value: prod
+      # --- secrets you paste in the Render dashboard (sync: false = never stored in git) ---
+      - key: GROQ_API_KEY
+        sync: false
+      - key: DATABASE_URL          # Neon *direct* connection string (not -pooler)
+        sync: false
+      - key: REDIS_URL             # Upstash rediss://… URL
+        sync: false
+      - key: DEMO_PASSWORD
+        sync: false
+      - key: CORS_ORIGINS          # https://<project>.vercel.app
+        sync: false
+      - key: LANGFUSE_PUBLIC_KEY
+        sync: false
+      - key: LANGFUSE_SECRET_KEY
+        sync: false
+      - key: GEMINI_API_KEY        # embeddings (the local model doesn't fit in 512 MB)
+        sync: false
+      # --- generated once by Render ---
+      - key: JWT_SECRET
+        generateValue: true
+      - key: MCP_INTERNAL_SECRET
+        generateValue: true
+      # --- plain configuration ---
+      - key: LANGFUSE_HOST
+        value: https://cloud.langfuse.com
+      - key: EMBEDDING_PROVIDER    # fastembed needs ~750 MB RAM: use it on a 2 GB instance
+        value: gemini
+      - key: RATE_LIMIT_PER_HOUR
+        value: "20"
+      - key: DAILY_TOKEN_BUDGET
+        value: "250000"

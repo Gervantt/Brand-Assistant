@@ -1,12 +1,22 @@
-# Production profile: Render + Neon + Upstash + Groq + Langfuse Cloud, reranker off.
+# Production profile: Render (one container, embedded MCP) + Neon + Upstash + Groq + Langfuse
+# Cloud. Reranker off and embeddings via the Gemini API (local models don't fit 512 MB).
+# Secrets and URLs come from the environment.
 log_level: INFO
 log_json: true
+mcp_mode: embedded
+rate_limit_per_hour: 20
+daily_token_budget: 250000   # Groq free tier: 200K tokens/day per model; two models in the chain
 
 llm:
   provider: groq
   fallback:
-    - groq/qwen/qwen3.8-27b
+    - groq/qwen/qwen3.8-27b    # separate per-model rate-limit bucket
     - groq/openai/gpt-oss-20b
   classifier: heuristic
   timeout_s: 30
   max_retries: 2
+  cache_enabled: true
+
+agent:
+  max_steps: 8
+  generation_timeout_s: 120

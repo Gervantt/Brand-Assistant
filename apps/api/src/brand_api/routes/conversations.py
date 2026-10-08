@@ -16,7 +16,16 @@ from brand_api.agent.history import append_messages, load_history
 from brand_api.agent.orchestrator import RunInput, RunState
 from brand_api.auth.deps import CurrentUser, require
 from brand_api.auth.principal import Principal
-from brand_api.deps import AgentDep, RedisDep, SessionDep, SessionmakerDep, SettingsDep
+from brand_api.deps import (
+    AgentDep,
+    AgentLimiterDep,
+    BudgetDep,
+    RedisDep,
+    SessionDep,
+    SessionmakerDep,
+    SettingsDep,
+)
+from brand_api.limits.budget import BudgetExhaustedError
 from brand_shared.db.models import ChatMessage, Client, Conversation
 from brand_shared.logging_setup import get_logger
 from brand_shared.permissions import Action
@@ -161,9 +170,24 @@ async def send_message(
     redis: RedisDep,
     agent: AgentDep,
     settings: SettingsDep,
+    limiter: AgentLimiterDep,
+    budget: BudgetDep,
 ) -> EventSourceResponse:
     """Runs the agent and streams its events (SSE): meta, status, token, tool_start,
-    tool_end, artifact, citations, error, done."""
+    tool_end, artifact, citations, confidence, error, done."""
+    limit = await limiter.hit(str(principal.id))
+    if not limit.allowed:
+        minutes = max(1, round(limit.retry_after_s / 60))
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            f"Лимит демо: {limit.limit} запросов к ассистенту в час. "
+            f"Попробуйте через {minutes} мин.",
+            headers={"Retry-After": str(limit.retry_after_s)},
+        )
+    try:
+        await budget.check()
+    except BudgetExhaustedError as exc:
+        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, exc.user_message) from exc
     trace_id = uuid.uuid4().hex
     lock_key = _lock_key(conversation.id)
     if not await redis.set(lock_key, trace_id, nx=True, ex=settings.agent.lock_ttl_s):

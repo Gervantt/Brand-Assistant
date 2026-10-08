@@ -220,3 +220,24 @@ async def test_unknown_draft_is_a_clear_error(mcp_url: str, ids: DemoIds) -> Non
         )
     assert result.is_error
     assert "не найден" in text_of(result)
+
+
+class BrokenRetriever:
+    threshold = 0.4
+
+    async def search(self, *args: object, **kwargs: object) -> list[object]:
+        raise RuntimeError("embeddings API returned 400")
+
+
+async def test_generation_context_survives_a_retrieval_outage(ids: DemoIds) -> None:
+    from conftest import mcp_settings_for_tests  # noqa: PLC0415
+
+    from brand_mcp.brand_context import load_brand_context  # noqa: PLC0415
+    from brand_mcp.deps import Deps  # noqa: PLC0415
+
+    deps = Deps.create(mcp_settings_for_tests())
+    deps.retriever = BrokenRetriever()  # type: ignore[assignment]
+    context = await load_brand_context(deps, ids.clients["bean-there"], "осенний латте")
+    await deps.aclose()
+    assert context.hits == []
+    assert "Bean There" in context.render()  # still has the brand profile to write from

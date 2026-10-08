@@ -9,6 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from brand_api.agent.orchestrator import Agent
 from brand_api.config import Settings
+from brand_api.limits.budget import TokenBudget
+from brand_api.limits.rate_limit import RateLimiter
 from brand_api.llm.router import LLMRouter
 
 
@@ -51,3 +53,20 @@ def get_sessionmaker(request: Request) -> async_sessionmaker[AsyncSession]:
 
 
 SessionmakerDep = Annotated[async_sessionmaker[AsyncSession], Depends(get_sessionmaker)]
+
+
+def get_agent_limiter(request: Request) -> RateLimiter:
+    return cast(RateLimiter, request.app.state.agent_limiter)
+
+
+def get_login_limiter(request: Request) -> RateLimiter:
+    return cast(RateLimiter, request.app.state.login_limiter)
+
+
+def get_budget(request: Request) -> TokenBudget:
+    return cast(TokenBudget, request.app.state.budget)
+
+
+AgentLimiterDep = Annotated[RateLimiter, Depends(get_agent_limiter)]
+LoginLimiterDep = Annotated[RateLimiter, Depends(get_login_limiter)]
+BudgetDep = Annotated[TokenBudget, Depends(get_budget)]

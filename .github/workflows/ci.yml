@@ -81,6 +81,8 @@ jobs:
         run: docker build -f apps/mcp_server/Dockerfile .
       - name: Build web image
         run: docker build -f apps/web/Dockerfile .
+      - name: Build production image (Render)
+        run: docker build -f deploy/Dockerfile .
 
   e2e:
     needs: [backend, web]

@@ -325,3 +325,26 @@ def test_sse_parser_handles_crlf() -> None:
         'event: done\r\ndata: {"steps": 1}\r\n\r\n'
     )
     assert parse_sse(raw) == [("token", {"text": "a"}), ("done", {"steps": 1})]
+
+
+async def test_repeatedly_failing_tool_is_not_called_a_third_time(settings: Settings) -> None:
+    bad = {"draft_id": "deadbeefdeadbeef"}
+    llm = ScriptedProvider(
+        "groq",
+        [
+            tool_reply(("publish_content_plan", bad)),
+            tool_reply(("publish_content_plan", bad)),
+            tool_reply(("publish_content_plan", bad)),
+            reply("Не получилось опубликовать: черновик не найден."),
+        ],
+    )
+    async with api_with_llm(settings, llm) as client:
+        headers = await demo_headers(client, Role.MANAGER)
+        conversation_id = await new_conversation(client, headers)
+        events = await chat(client, headers, conversation_id, "Опубликуй план")
+
+    ends = [data for name, data in events if name == "tool_end"]
+    assert [e["ok"] for e in ends] == [False, False, False]
+    assert ends[2]["summary"] == "Повторные ошибки"
+    assert names(events).count("tool_start") == 2  # the third call never reached MCP
+    assert "дважды" in llm.requests[3][1].messages[-1].content

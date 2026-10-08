@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Request, status
 
 from brand_api.auth.deps import CurrentUser
 from brand_api.auth.schemas import (
@@ -16,7 +16,7 @@ from brand_api.auth.service import (
     get_user_by_email,
     issue_token,
 )
-from brand_api.deps import SessionDep, SettingsDep
+from brand_api.deps import LoginLimiterDep, SessionDep, SettingsDep
 from brand_api.seed import DEMO_USERS
 from brand_shared.db.models import User
 from brand_shared.permissions import Role
@@ -50,7 +50,21 @@ async def register(
 
 
 @router.post("/login")
-async def login(body: LoginRequest, session: SessionDep, settings: SettingsDep) -> TokenResponse:
+async def login(
+    body: LoginRequest,
+    request: Request,
+    session: SessionDep,
+    settings: SettingsDep,
+    limiter: LoginLimiterDep,
+) -> TokenResponse:
+    client_ip = request.client.host if request.client else "unknown"
+    attempt = await limiter.hit(f"{client_ip}:{body.email}")
+    if not attempt.allowed:
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            "Слишком много попыток входа. Попробуйте через 15 минут.",
+            headers={"Retry-After": str(attempt.retry_after_s)},
+        )
     user = await authenticate(
         session, body.email, body.password, bcrypt_rounds=settings.bcrypt_rounds
     )

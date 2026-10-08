@@ -1,3 +1,4 @@
+import os
 from functools import lru_cache
 from typing import Literal
 
@@ -9,7 +10,10 @@ DEV_MCP_SECRET = "dev-only-insecure-mcp-secret-change-me"  # noqa: S105 - dev de
 
 class McpSettings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env", env_ignore_empty=True, extra="ignore", frozen=True
+        env_file=os.environ.get("BRAND_ENV_FILE", ".env") or None,
+        env_ignore_empty=True,
+        extra="ignore",
+        frozen=True,
     )
 
     app_env: str = "local"

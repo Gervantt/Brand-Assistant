@@ -40,7 +40,7 @@ evaluated with a reproducible retrieval benchmark.
 | **Access control** | JWT auth; roles viewer → copywriter → manager → admin (RBAC); per-client assignments (ABAC); tools filtered before the model sees them **and** re-checked on every call, on the gateway **and** on the MCP server |
 | **RAG** | PDF/DOCX/MD ingestion, heading-aware chunking, pgvector HNSW + IDF-weighted Postgres full-text, Reciprocal Rank Fusion, optional multilingual cross-encoder, citations, confidence gate |
 | **Observability** | Langfuse traces (one per request: agent → generations → tools), `llm_calls` table, `/admin/metrics` (avg/p95 latency, cost per day/model, error & fallback rates), Redis response cache with "saved $" |
-| **Demo safety** | Per-user rate limit and a global daily token budget (deploy phase), seeded demo accounts with one-click login, secrets only via env |
+| **Demo safety** | 20 agent requests/hour per user, login throttling, a global daily token budget, seeded demo accounts with one-click login, secrets only via env |
 
 ## Architecture
 
@@ -270,7 +270,15 @@ The full log is in [docs/decisions.md](docs/decisions.md). The highlights:
 ## Deployment
 
 Free-tier production: Vercel (UI) · Render (API + MCP in one container) · Neon (Postgres +
-pgvector) · Upstash (Redis) · Langfuse Cloud · Groq. Step-by-step guide: [DEPLOY.md](DEPLOY.md).
+pgvector) · Upstash (Redis) · Langfuse Cloud · Groq · Gemini embeddings. Step-by-step guide
+(in Russian): [DEPLOY.md](DEPLOY.md).
+
+The production image was load-tested locally under Render's 512 MB limit:
+- **Local multilingual embedding model** — ~750 MB, OOM-killed.
+- **Gemini embeddings** — 171 MB steady, 206 MB peak during a full agent turn.
+
+That measurement is why production embeds through the Gemini API
+([decision 029](docs/decisions.md)).
 
 ---
 

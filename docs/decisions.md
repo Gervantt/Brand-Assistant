@@ -247,3 +247,32 @@ Pydantic verdict schema. Evals are not part of CI: they need real models and pro
 for every role, ABAC, ingested documents, the SSE agent stream, admin metrics and the web app.
 It passes with or without an LLM key (without one it expects the explicit `llm_unavailable`
 error), so CI can run it without secrets.
+
+## 029. Production on Render free: one process, Gemini embeddings (measured)
+Render's free web service has 512 MB RAM and private services aren't free, so production runs a
+single container: the API with the MCP tool server mounted in-process (`MCP_MODE=embedded`),
+still talking real MCP over HTTP on localhost with the signed service token.
+Measured with `docker run --memory=512m` on the production image:
+- the app with all libraries imported: ~185 MB;
+- loading `paraphrase-multilingual-MiniLM-L12-v2` (241 MB on disk) adds ~560 MB resident
+  (onnxruntime graph optimisation; disabling the CPU arena saves only ~15 MB) — the container was
+  OOM-killed;
+- with Gemini embeddings: **171 MB steady, 206 MB peak** while serving a full agent turn.
+So production uses `EMBEDDING_PROVIDER=gemini` (free API key) and keeps the reranker off;
+fastembed stays the default locally and on instances with ≥2 GB. English `bge-small` would fit but
+retrieves Russian poorly. Two bugs this measurement surfaced and fixed: a race in lazy model
+loading (warm-up and startup ingestion loaded two copies) and a 256-item default batch size.
+
+## 030. Public-demo limits
+`RATE_LIMIT_PER_HOUR` (default 20) agent messages per user — a fixed hourly window in Redis,
+answered with 429, a readable message and `Retry-After`. Login is throttled per IP+email (10 per
+15 min). `DAILY_TOKEN_BUDGET` caps total LLM tokens per UTC day across the demo (checked before
+every LLM call, incremented after; cache hits are free) to protect the free Groq quota. Limiters
+fail open if Redis is unavailable — an outage of the protection must not take the product down.
+
+## 031. Degrade instead of failing
+A live run in the production topology showed two failure amplifiers: (1) generation tools used
+brand-book retrieval for context and failed entirely when the embeddings API failed — they now
+fall back to the client profile; (2) the model retried a failing tool until the step limit —
+the gateway now refuses a third call to a tool that already failed twice in the run and tells
+the model to report the problem.

@@ -1,6 +1,7 @@
 """Embedding and reranking backends behind small protocols (fastembed local / Gemini API)."""
 
 import math
+import threading
 from collections.abc import Sequence
 from typing import Any, Protocol
 
@@ -22,6 +23,10 @@ class Reranker(Protocol):
         ...
 
 
+# Small batches keep onnxruntime's peak allocations low (Render's free tier has 512 MB).
+EMBED_BATCH_SIZE = 8
+
+
 class FastembedEmbedder:
     """Local ONNX model (no API key). Loaded lazily; inference runs in a worker thread."""
 
@@ -29,17 +34,20 @@ class FastembedEmbedder:
         self.model_name = model_name
         self.cache_dir = cache_dir
         self._model: Any = None
+        self._lock = threading.Lock()  # warm-up and startup ingestion race to load the model
 
     def _load(self) -> Any:
-        if self._model is None:
-            from fastembed import TextEmbedding  # noqa: PLC0415 - heavy import, load on demand
+        with self._lock:
+            if self._model is None:
+                from fastembed import TextEmbedding  # noqa: PLC0415 - heavy, load on demand
 
-            self._model = TextEmbedding(self.model_name, cache_dir=self.cache_dir)
-        return self._model
+                self._model = TextEmbedding(self.model_name, cache_dir=self.cache_dir, threads=1)
+            return self._model
 
     async def embed_documents(self, texts: Sequence[str]) -> list[list[float]]:
         def run() -> list[list[float]]:
-            return [v.tolist() for v in self._load().passage_embed(list(texts))]
+            vectors = self._load().passage_embed(list(texts), batch_size=EMBED_BATCH_SIZE)
+            return [v.tolist() for v in vectors]
 
         return await anyio.to_thread.run_sync(run)
 
@@ -96,13 +104,15 @@ class FastembedReranker:
         self.model_name = model_name
         self.cache_dir = cache_dir
         self._model: Any = None
+        self._lock = threading.Lock()
 
     def _load(self) -> Any:
-        if self._model is None:
-            from fastembed.rerank.cross_encoder import TextCrossEncoder  # noqa: PLC0415
+        with self._lock:
+            if self._model is None:
+                from fastembed.rerank.cross_encoder import TextCrossEncoder  # noqa: PLC0415
 
-            self._model = TextCrossEncoder(self.model_name, cache_dir=self.cache_dir)
-        return self._model
+                self._model = TextCrossEncoder(self.model_name, cache_dir=self.cache_dir)
+            return self._model
 
     async def rerank(self, query: str, texts: Sequence[str]) -> list[float]:
         def run() -> list[float]:

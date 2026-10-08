@@ -7,3 +7,6 @@ llm:
   fallback: []
   cache_enabled: false  # scripted providers must see every call
 bcrypt_rounds: 4
+# Limits are exercised by dedicated tests with their own values.
+rate_limit_per_hour: 100000
+login_attempts_per_15m: 100000

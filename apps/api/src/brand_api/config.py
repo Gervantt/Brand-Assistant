@@ -9,7 +9,7 @@ import os
 from enum import StrEnum
 from functools import lru_cache
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from dotenv import dotenv_values
 from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
@@ -35,8 +35,13 @@ class AppEnv(StrEnum):
     TEST = "test"
 
 
+# Tests set BRAND_ENV_FILE="" so a developer's personal .env never leaks into them.
+ENV_FILE = os.environ.get("BRAND_ENV_FILE", ".env") or None
+
+
 def _resolve_app_env() -> AppEnv:
-    raw = os.environ.get("APP_ENV") or dotenv_values(".env").get("APP_ENV") or AppEnv.LOCAL
+    from_file = dotenv_values(ENV_FILE).get("APP_ENV") if ENV_FILE else None
+    raw = os.environ.get("APP_ENV") or from_file or AppEnv.LOCAL
     return AppEnv(raw)
 
 
@@ -58,7 +63,7 @@ class AgentSettings(BaseModel):
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=ENV_FILE,
         env_ignore_empty=True,
         env_nested_delimiter="__",
         extra="ignore",
@@ -100,6 +105,15 @@ class Settings(BaseSettings):
     mcp_url: str = "http://localhost:8001/mcp"
     mcp_internal_secret: SecretStr = SecretStr(DEV_MCP_SECRET)
     max_upload_bytes: int = Field(default=10 * 1024 * 1024, gt=0)
+    # "remote": separate MCP container (compose). "embedded": the MCP app is mounted into this
+    # process and reached over HTTP on localhost (Render free tier: one container, 512 MB).
+    mcp_mode: Literal["remote", "embedded"] = "remote"
+    port: int = 8000
+
+    # Public-demo protection.
+    rate_limit_per_hour: int = Field(default=20, ge=1)
+    login_attempts_per_15m: int = Field(default=10, ge=1)
+    daily_token_budget: int | None = Field(default=None, ge=1000)
     agent: AgentSettings = Field(default_factory=AgentSettings)
 
     @field_validator("cors_origins", mode="before")

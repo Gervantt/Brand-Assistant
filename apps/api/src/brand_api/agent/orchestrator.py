@@ -41,6 +41,7 @@ from brand_api.agent.tools import (
 )
 from brand_api.auth.principal import Principal
 from brand_api.config import AgentSettings
+from brand_api.limits.budget import BudgetExhaustedError
 from brand_api.llm.errors import AllModelsFailedError, StreamInterruptedError
 from brand_api.llm.router import CallContext, LLMRouter
 from brand_api.llm.types import (
@@ -57,6 +58,7 @@ from brand_shared.logging_setup import get_logger
 from brand_shared.permissions import Tool
 
 log = get_logger(__name__)
+MAX_TOOL_FAILURES = 2
 
 
 @dataclass
@@ -69,6 +71,7 @@ class RunState:
     steps: int = 0
     error: str | None = None
     retrieval_scores: list[float] = field(default_factory=list)
+    tool_failures: dict[str, int] = field(default_factory=dict)
 
     def add(self, message: Message, **extra: Any) -> None:
         if extra:
@@ -233,6 +236,8 @@ class Agent:
     def _failure(exc: Exception, run: RunInput, state: RunState) -> ErrorEvent:
         root = root_cause(exc)
         state.error = type(root).__name__
+        if isinstance(root, BudgetExhaustedError):
+            return ErrorEvent(root.user_message, code="budget_exhausted")
         if isinstance(root, AllModelsFailedError | StreamInterruptedError):
             log.warning("agent_llm_failed", error=str(root), trace_id=run.trace_id)
             return ErrorEvent(root.user_message, code="llm_unavailable")
@@ -284,6 +289,14 @@ class Agent:
             respond('{"error": "Инструмент недоступен для роли пользователя. Сообщи об этом."}')
             yield ToolEndEvent(call.id, call.name, ok=False, summary="Нет доступа")
             return
+        if state.tool_failures.get(call.name, 0) >= MAX_TOOL_FAILURES:
+            # Don't let the model hammer a broken tool until the step limit.
+            respond(
+                '{"error": "Инструмент уже дважды завершился ошибкой. Не вызывай его снова: '
+                'сообщи пользователю, что сервис временно недоступен."}'
+            )
+            yield ToolEndEvent(call.id, call.name, ok=False, summary="Повторные ошибки")
+            return
         if call.parse_error:
             respond(f'{{"error": "Некорректные аргументы: {call.parse_error}"}}')
             yield ToolEndEvent(call.id, call.name, ok=False, summary="Некорректные аргументы")
@@ -302,6 +315,7 @@ class Agent:
                 async with asyncio.timeout(timeout):
                     outcome = await mcp.call(call.name, arguments)
             except TimeoutError:
+                state.tool_failures[call.name] = state.tool_failures.get(call.name, 0) + 1
                 span.update(level="ERROR", status_message="timeout")
                 respond('{"error": "Инструмент не ответил вовремя."}')
                 yield ToolEndEvent(call.id, call.name, ok=False, summary="Превышено время ожидания")
@@ -318,6 +332,7 @@ class Agent:
             trace_id=run.trace_id,
         )
         if not outcome.ok:
+            state.tool_failures[call.name] = state.tool_failures.get(call.name, 0) + 1
             respond(f'{{"error": {outcome.text!r}}}')
             yield ToolEndEvent(call.id, call.name, ok=False, summary=outcome.text[:200])
             return
