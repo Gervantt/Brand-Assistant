@@ -188,6 +188,16 @@ contains the evidence quote.
 | hybrid (RRF) | 0.70 | 0.95 | 0.97 | 0.83 | 0.95 | 0.80 | 14 |
 | hybrid + reranker | **0.88** | **0.97** | **1.00** | **0.92** | 0.95 | **1.00** | 719 |
 
+**Production embeddings (Gemini `gemini-embedding-001`, 384-d)** — same dataset,
+`EVAL_EMBEDDINGS=gemini uv run python -m evals.run_evals retrieval`:
+
+| Configuration | Recall@1 | Recall@3 | Recall@5 | MRR@10 | Found (answerable) | Abstained (off-topic) | p95, ms |
+|---|---|---|---|---|---|---|---|
+| vector only | 0.90 | 0.97 | 0.97 | 0.94 | 1.00 | 0.80 | 657 |
+| lexical only (IDF) | 0.75 | 0.90 | 0.95 | 0.83 | 0.97 | 1.00 | 582 |
+| hybrid (RRF) | 0.88 | 0.95 | 0.97 | 0.92 | 1.00 | 0.80 | 1513 |
+| hybrid + reranker | 0.88 | 0.97 | 1.00 | 0.92 | 0.95 | 1.00 | 2260 |
+
 What the numbers say:
 - **Hybrid search beats either side alone.** It reaches Recall@5 0.97.
 - **The reranker earns its cost where it is affordable.** It adds +18 pp Recall@1 and declines
@@ -196,6 +206,10 @@ What the numbers say:
 - **Without the reranker, one off-topic question passes the gate.** «абонемент в фитнес-зал»
   against a sports-store brand book scores 0.43 cosine. The model's self-assessment then lowers
   the answer's combined confidence.
+- **Gemini embeddings retrieve much better than local MiniLM.** In production (hybrid, no
+  reranker) Recall@1 rises from 0.70 to 0.88 and all answerable questions are found. The cost is
+  ~0.6–1.5 s of network latency per query. Similarity scales differ per model, so the "found"
+  threshold is calibrated per provider: 0.40 for MiniLM, 0.66 for Gemini.
 
 ### Answer quality (LLM-as-judge) and model comparison
 

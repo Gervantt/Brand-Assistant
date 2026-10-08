@@ -276,3 +276,16 @@ brand-book retrieval for context and failed entirely when the embeddings API fai
 fall back to the client profile; (2) the model retried a failing tool until the step limit —
 the gateway now refuses a third call to a tool that already failed twice in the run and tells
 the model to report the problem.
+
+## 032. Per-provider similarity thresholds; Gemini batching
+Running the retrieval eval with Gemini embeddings showed two things:
+- **Retrieval is much stronger.** Hybrid Recall@1 is 0.88 vs 0.70 with MiniLM.
+- **Cosine similarities sit on a different scale.** Answerable questions score ≥0.63, off-topic
+  ones up to 0.68, so the MiniLM threshold (0.40) let every off-topic question through.
+
+The "found" threshold is therefore calibrated per provider (`CALIBRATED_MIN_SIMILARITY`:
+fastembed 0.40, gemini 0.66), overridable with `MIN_SIMILARITY`.
+
+The same run also hit Gemini's free-tier limit, where each text in a batch counts as a request.
+The embedder now sends batches of 20 and retries 429/5xx with backoff, honouring `Retry-After`.
+Without this, startup ingestion on Render would fail.

@@ -50,5 +50,31 @@ async def test_large_ingests_are_split_into_api_sized_batches() -> None:
     seen: list[dict[str, Any]] = []
     embedder = GeminiEmbedder("k", "gemini-embedding-001", http=fake_gemini(seen))
     vectors = await embedder.embed_documents([f"фрагмент {i}" for i in range(230)])
-    assert [len(call["requests"]) for call in seen] == [100, 100, 30]
+    assert [len(call["requests"]) for call in seen] == [20] * 11 + [10]
     assert len(vectors) == 230
+
+
+async def test_rate_limits_are_retried_with_backoff() -> None:
+    calls = 0
+    delays: list[float] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        nonlocal calls
+        calls += 1
+        if calls <= 2:
+            return httpx2.Response(429, json={"error": {"code": 429}}, headers={"retry-after": "3"})
+        size = len(json.loads(request.content)["requests"])
+        return httpx2.Response(200, json={"embeddings": [{"values": [1.0] * EMBEDDING_DIM}] * size})
+
+    async def fake_sleep(seconds: float) -> None:
+        delays.append(seconds)
+
+    embedder = GeminiEmbedder(
+        "k",
+        "gemini-embedding-001",
+        http=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+        sleep=fake_sleep,
+    )
+    vectors = await embedder.embed_documents(["a", "b"])
+    assert len(vectors) == 2
+    assert delays == [3.0, 3.0]  # honoured Retry-After

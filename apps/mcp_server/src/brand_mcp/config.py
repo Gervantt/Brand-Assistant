@@ -39,12 +39,23 @@ class McpSettings(BaseSettings):
     reranker_model: str = "jinaai/jina-reranker-v2-base-multilingual"
     rag_candidates: int = Field(default=20, ge=5, le=100)
     # A hit counts as "found" above these scores (cosine similarity / reranker probability).
-    min_similarity: float = Field(default=0.40, ge=0, le=1)  # calibrated, see decisions 019
+    # Cosine scales differ per embedding model; None = calibrated default for the provider
+    # (decisions 019 and 032).
+    min_similarity: float | None = Field(default=None, ge=0, le=1)
     min_rerank_score: float = Field(default=0.3, ge=0, le=1)
     chunk_target_chars: int = Field(default=1200, ge=200)
     chunk_overlap_chars: int = Field(default=200, ge=0)
     max_upload_bytes: int = Field(default=10 * 1024 * 1024, gt=0)
     seed_documents_dir: str | None = None  # ingest data/brands/<client-slug>/*.md at startup
+
+    @property
+    def similarity_threshold(self) -> float:
+        if self.min_similarity is not None:
+            return self.min_similarity
+        return CALIBRATED_MIN_SIMILARITY[self.embedding_provider]
+
+
+CALIBRATED_MIN_SIMILARITY = {"fastembed": 0.40, "gemini": 0.66}
 
 
 @lru_cache

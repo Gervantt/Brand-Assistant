@@ -120,7 +120,7 @@ class HybridRetriever:
         self.reranker = reranker
         self.mode = mode
         self.candidates = settings.rag_candidates
-        self.threshold = settings.min_rerank_score if reranker else settings.min_similarity
+        self.threshold = settings.min_rerank_score if reranker else settings.similarity_threshold
 
     async def search(
         self, session: AsyncSession, client_id: uuid.UUID, query: str, top_k: int

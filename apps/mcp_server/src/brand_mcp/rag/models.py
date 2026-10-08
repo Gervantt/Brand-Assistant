@@ -2,7 +2,7 @@
 
 import math
 import threading
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from typing import Any, Protocol
 
 import anyio
@@ -60,14 +60,27 @@ class FastembedEmbedder:
 
 
 class GeminiEmbedder:
-    """Gemini embeddings truncated (Matryoshka) to our column size and re-normalised."""
+    """Gemini embeddings truncated (Matryoshka) to our column size and re-normalised.
+
+    On the free tier every text in a batch counts as one request (~100/min), so batches are
+    small and 429/5xx answers are retried with backoff (honouring Retry-After).
+    """
 
     URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:batchEmbedContents"
+    BATCH_SIZE = 20
+    MAX_ATTEMPTS = 6
 
-    def __init__(self, api_key: str, model: str, http: httpx2.AsyncClient | None = None) -> None:
+    def __init__(
+        self,
+        api_key: str,
+        model: str,
+        http: httpx2.AsyncClient | None = None,
+        sleep: Callable[[float], Awaitable[None]] = anyio.sleep,
+    ) -> None:
         self.api_key = api_key
         self.model = model
         self.http = http or httpx2.AsyncClient(timeout=30)
+        self._sleep = sleep
 
     async def _embed(self, texts: Sequence[str], task: str) -> list[list[float]]:
         body = {
@@ -81,18 +94,24 @@ class GeminiEmbedder:
                 for t in texts
             ]
         }
-        response = await self.http.post(
-            self.URL.format(model=self.model),
-            json=body,
-            headers={"x-goog-api-key": self.api_key},
-        )
+        for attempt in range(1, self.MAX_ATTEMPTS + 1):
+            response = await self.http.post(
+                self.URL.format(model=self.model),
+                json=body,
+                headers={"x-goog-api-key": self.api_key},
+            )
+            retryable = response.status_code == 429 or response.status_code >= 500
+            if not retryable or attempt == self.MAX_ATTEMPTS:
+                break
+            await self._sleep(_retry_delay(response, attempt))
         response.raise_for_status()
         return [_normalise(e["values"]) for e in response.json()["embeddings"]]
 
     async def embed_documents(self, texts: Sequence[str]) -> list[list[float]]:
         vectors: list[list[float]] = []
-        for start in range(0, len(texts), 100):  # API batch limit
-            vectors.extend(await self._embed(texts[start : start + 100], "RETRIEVAL_DOCUMENT"))
+        for start in range(0, len(texts), self.BATCH_SIZE):
+            batch = texts[start : start + self.BATCH_SIZE]
+            vectors.extend(await self._embed(batch, "RETRIEVAL_DOCUMENT"))
         return vectors
 
     async def embed_query(self, text: str) -> list[float]:
@@ -119,6 +138,13 @@ class FastembedReranker:
             return [_sigmoid(float(s)) for s in self._load().rerank(query, list(texts))]
 
         return await anyio.to_thread.run_sync(run)
+
+
+def _retry_delay(response: httpx2.Response, attempt: int) -> float:
+    header = response.headers.get("retry-after", "")
+    if header.replace(".", "", 1).isdigit():
+        return min(float(header), 60.0)
+    return min(2.0**attempt, 60.0)  # 2, 4, 8, 16, 32 s
 
 
 def _normalise(vector: list[float]) -> list[float]:

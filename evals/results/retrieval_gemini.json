@@ -1,0 +1,61 @@
+{
+  "date": "2026-10-08",
+  "cases": 45,
+  "rows": [
+    {
+      "config": "vector only",
+      "recall_at_1": 0.9,
+      "recall_at_3": 0.975,
+      "recall_at_5": 0.975,
+      "mrr_at_10": 0.937,
+      "found_rate_answerable": 1.0,
+      "abstention_rate_offtopic": 0.8,
+      "p50_latency_ms": 355.5,
+      "p95_latency_ms": 657.0,
+      "misses_at_5": [
+        "pf-01"
+      ]
+    },
+    {
+      "config": "lexical only (IDF)",
+      "recall_at_1": 0.75,
+      "recall_at_3": 0.9,
+      "recall_at_5": 0.95,
+      "mrr_at_10": 0.828,
+      "found_rate_answerable": 0.975,
+      "abstention_rate_offtopic": 1.0,
+      "p50_latency_ms": 345.4,
+      "p95_latency_ms": 581.6,
+      "misses_at_5": [
+        "bt-13",
+        "bt-20"
+      ]
+    },
+    {
+      "config": "hybrid (RRF)",
+      "recall_at_1": 0.875,
+      "recall_at_3": 0.95,
+      "recall_at_5": 0.975,
+      "mrr_at_10": 0.923,
+      "found_rate_answerable": 1.0,
+      "abstention_rate_offtopic": 0.8,
+      "p50_latency_ms": 355.5,
+      "p95_latency_ms": 1513.3,
+      "misses_at_5": [
+        "bt-13"
+      ]
+    },
+    {
+      "config": "hybrid + reranker",
+      "recall_at_1": 0.875,
+      "recall_at_3": 0.975,
+      "recall_at_5": 1.0,
+      "mrr_at_10": 0.923,
+      "found_rate_answerable": 0.95,
+      "abstention_rate_offtopic": 1.0,
+      "p50_latency_ms": 1529.2,
+      "p95_latency_ms": 2259.5,
+      "misses_at_5": []
+    }
+  ]
+}

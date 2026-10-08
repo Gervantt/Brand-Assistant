@@ -25,8 +25,12 @@ ROOT = Path(__file__).resolve().parents[1]
 DATASET = ROOT / "evals" / "brandbook_qa.jsonl"
 RESULTS = ROOT / "evals" / "results"
 MODEL_CACHE = str(ROOT / ".cache" / "fastembed")
+# EVAL_EMBEDDINGS=gemini evaluates the production embedding path (separate DB: other vectors).
+EMBEDDINGS = os.environ.get("EVAL_EMBEDDINGS", "fastembed")
 EVAL_DATABASE_URL = os.environ.get(
-    "EVAL_DATABASE_URL", "postgresql://brand:brand@localhost:5433/brand_eval"
+    "EVAL_DATABASE_URL",
+    "postgresql://brand:brand@localhost:5433/brand_eval"
+    + ("" if EMBEDDINGS == "fastembed" else f"_{EMBEDDINGS}"),
 )
 EVAL_REDIS_URL = os.environ.get("EVAL_REDIS_URL", "redis://localhost:6379/14")
 
@@ -54,6 +58,7 @@ def mcp_settings(*, reranker: bool) -> McpSettings:
         database_url=EVAL_DATABASE_URL,
         redis_url=EVAL_REDIS_URL,
         model_cache_dir=MODEL_CACHE,
+        embedding_provider=EMBEDDINGS,
         reranker_enabled=reranker,
         log_level="WARNING",
     )
