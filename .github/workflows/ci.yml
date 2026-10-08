@@ -81,3 +81,21 @@ jobs:
         run: docker build -f apps/mcp_server/Dockerfile .
       - name: Build web image
         run: docker build -f apps/web/Dockerfile .
+
+  e2e:
+    needs: [backend, web]
+    runs-on: ubuntu-latest
+    env:
+      RERANKER_ENABLED: "false"  # keep CI from downloading the 1.1 GB cross-encoder
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Start the stack
+        run: docker compose up -d --build --wait
+      - name: Smoke test
+        run: uv run --with httpx python scripts/smoke.py
+      - name: Logs on failure
+        if: failure()
+        run: docker compose logs --tail 200

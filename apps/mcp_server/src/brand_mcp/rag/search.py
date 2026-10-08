@@ -5,6 +5,7 @@ optionally re-ordered by a cross-encoder. Every hit carries a calibrated-ish sco
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import Literal
 
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -102,12 +103,22 @@ class _Candidate:
         return f"{self.section}\n{self.text}" if self.section else self.text
 
 
+RetrievalMode = Literal["hybrid", "vector", "lexical"]
+
+
 class HybridRetriever:
+    """`mode` exists for evals (ablations); production always runs "hybrid"."""
+
     def __init__(
-        self, embedder: Embedder, reranker: Reranker | None, settings: McpSettings
+        self,
+        embedder: Embedder,
+        reranker: Reranker | None,
+        settings: McpSettings,
+        mode: RetrievalMode = "hybrid",
     ) -> None:
         self.embedder = embedder
         self.reranker = reranker
+        self.mode = mode
         self.candidates = settings.rag_candidates
         self.threshold = settings.min_rerank_score if reranker else settings.min_similarity
 
@@ -142,7 +153,8 @@ class HybridRetriever:
                 )
             ).all()
         )
-        fused = reciprocal_rank_fusion([vector_ids, fts_ids])
+        rankings = {"hybrid": [vector_ids, fts_ids], "vector": [vector_ids], "lexical": [fts_ids]}
+        fused = reciprocal_rank_fusion(rankings[self.mode])
         if not fused:
             return []
 

@@ -409,6 +409,7 @@ class LLMRouter:
             tier=o.tier.value,
             status="error",
             error_type=error.kind,
+            error=str(error)[:300],  # provider message, e.g. "model blocked at org level"
             retryable=error.retryable,
             attempt=o.attempt,
             fallback=o.is_fallback,

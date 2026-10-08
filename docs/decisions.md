@@ -233,3 +233,17 @@ Vitest). SSE goes through `@microsoft/fetch-event-source` (EventSource can't POS
 when a request takes >5 s or fails at the network level (Render free tier cold start). The API
 base URL comes from `VITE_API_URL`. Locally the same static build is served by nginx in compose
 (`:5173`); in production Vercel hosts it.
+
+## 027. Evals: evidence-quote relevance, ablations, judge with a fixed model
+Retrieval relevance is decided by an exact evidence quote from the source document rather than
+by chunk ids, so the dataset survives re-chunking. Four configurations are measured (vector,
+lexical, hybrid, hybrid + reranker) on a dedicated `brand_eval` database built from scratch by the
+script. Answer quality uses the production retrieval and the agent's grounding rules, one model at
+a time with no fallback (so results are attributable), and a single fixed judge model with a
+Pydantic verdict schema. Evals are not part of CI: they need real models and provider quota.
+
+## 028. End-to-end smoke test
+`scripts/smoke.py` exercises a running compose stack the way a user would: health, demo login
+for every role, ABAC, ingested documents, the SSE agent stream, admin metrics and the web app.
+It passes with or without an LLM key (without one it expects the explicit `llm_unavailable`
+error), so CI can run it without secrets.
