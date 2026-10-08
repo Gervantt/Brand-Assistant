@@ -1,0 +1,34 @@
+{
+  "date": "2026-10-08",
+  "cases": 45,
+  "rows": [
+    {
+      "model": "groq/openai/gpt-oss-20b",
+      "accuracy": 0.9,
+      "partial": 0.025,
+      "grounded": 0.933,
+      "abstention_offtopic": 1.0,
+      "false_abstention": 0.075,
+      "p50_latency_ms": 505.6,
+      "p95_latency_ms": 783.3,
+      "tokens_in": 22937,
+      "tokens_out": 6630,
+      "cost_usd": 0.003708,
+      "errors": 0
+    },
+    {
+      "model": "groq/openai/gpt-oss-120b",
+      "accuracy": 0.925,
+      "partial": 0.0,
+      "grounded": 0.933,
+      "abstention_offtopic": 1.0,
+      "false_abstention": 0.075,
+      "p50_latency_ms": 3668.5,
+      "p95_latency_ms": 6071.0,
+      "tokens_in": 22937,
+      "tokens_out": 6768,
+      "cost_usd": 0.007503,
+      "errors": 0
+    }
+  ]
+}

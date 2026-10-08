@@ -204,12 +204,19 @@ What the numbers say:
 Each model answers from the same retrieved fragments under the agent's grounding rules; a fixed
 judge grades correctness against the reference, groundedness, and correct abstention.
 
-| Model | Accuracy | Partial | Grounded | Abstained (off-topic) | False abstention | p95, ms | Cost, $ |
+| Model | Accuracy | Partial | Grounded | Abstained (off-topic) | False abstention | p95, ms | Cost (45 q), $ |
 |---|---|---|---|---|---|---|---|
-| groq/openai/gpt-oss-20b | _TBD_ | | | | | | |
-| groq/openai/gpt-oss-120b | _TBD_ | | | | | | |
+| groq/openai/gpt-oss-20b | 0.90 | 0.03 | 0.93 | 1.00 | 0.07 | 783 | 0.0037 |
+| groq/openai/gpt-oss-120b | **0.93** | 0.00 | 0.93 | 1.00 | 0.07 | 6071* | 0.0075 |
 
-> _TBD:_ pending a run with provider access. Results land in `evals/results/generation.md`.
+\* includes waiting out Groq's free-tier 8K tokens/minute limit: the judge runs on the same
+model and shares its per-minute budget, so this is not the model's raw latency.
+
+Both models decline every off-topic question and stay grounded. The small model is ~3 points
+less accurate at half the cost, which is why it serves the *simple* tier (brand-book Q&A) and
+the 120B model serves generation. The 7% false abstentions are questions where retrieval found
+the fragment but the model still said "not in the brand book". These are the next thing to fix:
+prompt tuning or reranker-ordered fragments.
 
 ## Security model
 
