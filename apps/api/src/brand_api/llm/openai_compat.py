@@ -9,7 +9,7 @@ import httpx2
 import openai
 from openai import AsyncOpenAI
 
-from brand_api.llm.errors import LLMError
+from brand_api.llm.errors import LLMError, with_cause
 from brand_api.llm.types import (
     ChatRequest,
     ChatResponse,
@@ -232,7 +232,7 @@ def _map_error(exc: openai.OpenAIError) -> LLMError:
     if isinstance(exc, openai.APITimeoutError):
         return LLMError(str(exc), kind="timeout", retryable=True)
     if isinstance(exc, openai.APIConnectionError):
-        return LLMError(str(exc), kind="connection", retryable=True)
+        return LLMError(with_cause(exc), kind="connection", retryable=True)
     if isinstance(exc, openai.RateLimitError):
         return LLMError(
             str(exc),

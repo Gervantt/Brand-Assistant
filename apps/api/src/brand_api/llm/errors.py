@@ -20,6 +20,20 @@ class LLMError(Exception):
         self.status_code = status_code
 
 
+def with_cause(exc: BaseException) -> str:
+    """SDK connection errors say only "Connection error."; append the underlying cause.
+
+    Header errors embed the header value (the API key), so they are replaced by a fixed hint.
+    """
+    cause = exc.__cause__
+    if cause is None:
+        return str(exc)
+    detail = str(cause)
+    if "header" in detail.lower():
+        detail = "illegal HTTP header value (API key contains whitespace or a newline?)"
+    return f"{exc} ({type(cause).__name__}: {detail[:200]})"
+
+
 @dataclass(frozen=True)
 class FailedAttempt:
     model: str

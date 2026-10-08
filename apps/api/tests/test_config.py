@@ -46,3 +46,12 @@ def test_prod_accepts_strong_jwt_secret() -> None:
         app_env=AppEnv.PROD, jwt_secret=SecretStr("s" * 48), mcp_internal_secret=SecretStr("m" * 48)
     )
     assert settings.app_env is AppEnv.PROD
+
+
+def test_pasted_secrets_are_stripped(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A trailing newline from a dashboard paste would make httpx reject the auth header.
+    monkeypatch.setenv("GROQ_API_KEY", "gsk_key\n")
+    monkeypatch.setenv("REDIS_URL", " rediss://default:pw@host:6379 ")
+    settings = Settings()
+    assert settings.groq_api_key == SecretStr("gsk_key")
+    assert settings.redis_url == "rediss://default:pw@host:6379"

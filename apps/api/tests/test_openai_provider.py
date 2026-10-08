@@ -5,9 +5,10 @@ from collections.abc import Callable
 from typing import Any
 
 import httpx2
+import openai
 import pytest
 
-from brand_api.llm.errors import LLMError
+from brand_api.llm.errors import LLMError, with_cause
 from brand_api.llm.openai_compat import OpenAICompatOptions, OpenAICompatProvider
 from brand_api.llm.types import (
     ChatRequest,
@@ -250,3 +251,12 @@ async def test_http_errors_map_to_llm_errors(
         await provider(handler).chat("m", ChatRequest(messages=[]))
     err = exc_info.value
     assert (err.kind, err.retryable, err.retry_after) == (kind, retryable, retry_after)
+
+
+def test_connection_error_names_cause_without_leaking_header_value() -> None:
+    error = openai.APIConnectionError(request=httpx2.Request("POST", "https://llm.test/v1"))
+    error.__cause__ = ValueError("Illegal header value b'Bearer gsk_secret\\n'")
+    message = with_cause(error)
+    assert "ValueError" in message
+    assert "whitespace" in message
+    assert "gsk_secret" not in message

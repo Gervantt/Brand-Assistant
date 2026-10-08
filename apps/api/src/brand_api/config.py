@@ -68,6 +68,9 @@ class Settings(BaseSettings):
         env_nested_delimiter="__",
         extra="ignore",
         frozen=True,
+        # Dashboard pastes often carry a trailing space/newline, which makes httpx reject the
+        # Authorization header ("Connection error.") instead of failing with a clear 401.
+        str_strip_whitespace=True,
     )
 
     app_env: AppEnv = AppEnv.LOCAL

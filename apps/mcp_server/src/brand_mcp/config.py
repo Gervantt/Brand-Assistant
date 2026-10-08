@@ -14,6 +14,7 @@ class McpSettings(BaseSettings):
         env_ignore_empty=True,
         extra="ignore",
         frozen=True,
+        str_strip_whitespace=True,  # pasted secrets with a trailing newline break HTTP headers
     )
 
     app_env: str = "local"

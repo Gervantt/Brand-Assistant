@@ -14,7 +14,7 @@ import httpx2
 from anthropic import AsyncAnthropic
 from anthropic.types import Message as AnthropicMessage
 
-from brand_api.llm.errors import LLMError
+from brand_api.llm.errors import LLMError, with_cause
 from brand_api.llm.types import (
     ChatRequest,
     ChatResponse,
@@ -173,7 +173,7 @@ def _map_error(exc: anthropic.AnthropicError) -> LLMError:
     if isinstance(exc, anthropic.APITimeoutError):
         return LLMError(str(exc), kind="timeout", retryable=True)
     if isinstance(exc, anthropic.APIConnectionError):
-        return LLMError(str(exc), kind="connection", retryable=True)
+        return LLMError(with_cause(exc), kind="connection", retryable=True)
     if isinstance(exc, anthropic.RateLimitError):
         header = exc.response.headers.get("retry-after")
         retry_after = float(header) if header and header.replace(".", "", 1).isdigit() else None
