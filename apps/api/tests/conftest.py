@@ -6,7 +6,8 @@ import socket
 from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
 
-# Must be set before brand_api modules read settings; BRAND_ENV_FILE="" ignores the developer's .env.
+# Must be set before brand_api modules read settings.
+# BRAND_ENV_FILE="" keeps the developer's personal .env out of the tests.
 os.environ["APP_ENV"] = "test"
 os.environ["BRAND_ENV_FILE"] = ""
 
